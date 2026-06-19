@@ -175,12 +175,12 @@ createAuthUI((token, username, spectate = false) => {
       natural: `Natural! ${total}`,
       craps: `Craps! ${total}`,
       point_set: `Point: ${table_state.point}`,
-      point_made: `Point Made! ${total}`,
+      point_made: `Point Made!`,
       seven_out: `Seven Out!`,
-      roll: `${die1} + ${die2} = ${total}`,
-    }[event] || `${die1} + ${die2} = ${total}`
+      roll: null,
+    }[event] ?? null
 
-    hud.showFlash(eventMsg, FLASH_COLOR[event] ?? '#fff')
+    if (eventMsg) hud.showFlash(eventMsg, FLASH_COLOR[event] ?? '#fff')
 
     hud.update({
       phase: table_state.phase,
