@@ -125,13 +125,16 @@ createAuthUI((token, username, spectate = false) => {
   document.body.appendChild(controls)
 
   socket.on('connect', () => socket.emit(isSpectator ? 'join_as_spectator' : 'join_table'))
-  socket.on('reconnected', (state) => { hud.update({ message: 'Reconnected!' }); applyTableState(state) })
-  socket.on('connect_error', (err) => hud.update({ phase: 'error', message: err.message }))
+  socket.on('reconnected', (state) => { hud.showFlash('Reconnected!', '#4af'); applyTableState(state) })
+  socket.on('connect_error', (err) => hud.update({ phase: 'error' }))
 
   function applyTableState(state) {
     const me = state.players.find(p => p.username === myUsername)
     const shooter = state.players.find(p => p.socketId === state.shooter_socket_id)
-    hud.update({ phase: state.phase, point: state.point, chips: me?.chipBalance, shooter: shooter?.username })
+    hud.update({
+      phase: state.phase, point: state.point, chips: me?.chipBalance,
+      shooter: shooter?.username, bets: state.bets, mySocketId: socket.id,
+    })
     updateBetVisuals(state.bets)
     if (!isSpectator) {
       const amShooter = state.shooter_socket_id === socket.id
@@ -148,32 +151,39 @@ createAuthUI((token, username, spectate = false) => {
   socket.on('roll_start', async ({ die1, die2, timestamp }) => {
     animating = true
     btnRoll.disabled = true
-    // Sync: delay start so all clients begin the animation at the same wall-clock time
     const delay = Math.max(0, timestamp - Date.now())
     if (delay > 0) await new Promise(r => setTimeout(r, delay))
     await throwDice(die1Mesh, die2Mesh, die1, die2)
     animating = false
   })
 
+  const FLASH_COLOR = {
+    natural: '#2aff80', craps: '#ff4444', point_set: '#ffcc00',
+    point_made: '#2aff80', seven_out: '#ff4444', roll: '#ffffff',
+  }
+
   socket.on('roll_resolved', ({ die1, die2, total, event, table_state }) => {
     const me = table_state.players.find(p => p.username === myUsername)
     const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
     const eventMsg = {
-      natural: `Natural! ${total} wins!`,
-      craps: `Craps! ${total} loses.`,
-      point_set: `Point is ${table_state.point}`,
-      point_made: `Point made! ${total} wins!`,
-      seven_out: `Seven out! You lose.`,
-      roll: `Rolled ${total}`,
-    }[event] || `Rolled ${total}`
+      natural: `Natural! ${total}`,
+      craps: `Craps! ${total}`,
+      point_set: `Point: ${table_state.point}`,
+      point_made: `Point Made! ${total}`,
+      seven_out: `Seven Out!`,
+      roll: `${die1} + ${die2} = ${total}`,
+    }[event] || `${die1} + ${die2} = ${total}`
+
+    hud.showFlash(eventMsg, FLASH_COLOR[event] ?? '#fff')
 
     hud.update({
       phase: table_state.phase,
       point: table_state.point,
       chips: me?.chipBalance,
-      lastRoll: `${die1} + ${die2} = ${total}`,
-      message: eventMsg,
+      lastRoll: `${die1}+${die2}=${total}`,
       shooter: shooter?.username,
+      bets: table_state.bets,
+      mySocketId: socket.id,
     })
 
     updateBetVisuals(table_state.bets)

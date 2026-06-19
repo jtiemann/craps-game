@@ -1,3 +1,15 @@
+const PHASE_COLOR = { come_out: '#2a7a4c', point: '#8b5a1a' }
+const BET_LABELS = {
+  pass_line: 'Pass', dont_pass: "Don't Pass", come: 'Come', dont_come: "Don't Come",
+  pass_odds: 'Pass Odds', dont_pass_odds: "DP Odds", field: 'Field',
+  any_seven: 'Any 7', any_craps: 'Any Craps', yo: 'Yo (11)',
+  aces: 'Aces', ace_deuce: 'Ace Deuce', boxcars: 'Boxcars', horn: 'Horn',
+  place_4: 'Place 4', place_5: 'Place 5', place_6: 'Place 6',
+  place_8: 'Place 8', place_9: 'Place 9', place_10: 'Place 10',
+  hard_4: 'Hard 4', hard_6: 'Hard 6', hard_8: 'Hard 8', hard_10: 'Hard 10',
+  big_6: 'Big 6', big_8: 'Big 8',
+}
+
 export function createHUD() {
   const hud = document.createElement('div')
   hud.id = 'hud'
@@ -5,21 +17,55 @@ export function createHUD() {
     position:fixed; top:12px; left:12px; color:#fff;
     font:14px/1.5 monospace; background:rgba(0,0,0,.55);
     padding:8px 12px; border-radius:6px; pointer-events:none; z-index:10;
+    min-width:160px;
   `
   document.body.appendChild(hud)
 
-  function update({ phase, point, chips, lastRoll, message, shooter } = {}) {
+  // Flash overlay for outcomes
+  const flash = document.createElement('div')
+  flash.id = 'outcome-flash'
+  flash.style.cssText = `
+    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    font:bold 28px/1.2 monospace; color:#fff; text-align:center;
+    text-shadow:0 2px 8px rgba(0,0,0,.8); pointer-events:none; z-index:50;
+    opacity:0; transition:opacity 0.15s;
+  `
+  document.body.appendChild(flash)
+
+  let flashTimer = null
+
+  function showFlash(text, color = '#ffcc00') {
+    flash.textContent = text
+    flash.style.color = color
+    flash.style.opacity = '1'
+    if (flashTimer) clearTimeout(flashTimer)
+    flashTimer = setTimeout(() => { flash.style.opacity = '0' }, 1800)
+  }
+
+  function update({ phase, point, chips, lastRoll, bets, mySocketId, shooter } = {}) {
+    const phaseColor = PHASE_COLOR[phase] ?? '#555'
+    const phaseLabel = phase === 'come_out' ? 'Come Out' : phase === 'point' ? `Point: ${point}` : (phase ?? '—')
+    const myBets = (bets ?? []).filter(b => b.socketId === mySocketId)
+
+    const betsHtml = myBets.length
+      ? '<hr style="border:0;border-top:1px solid rgba(255,255,255,.2);margin:6px 0">' +
+        myBets.map(b => {
+          const label = BET_LABELS[b.type] ?? b.type
+          const target = b.target ? ` →${b.target}` : ''
+          return `<span style="color:#aef">${label}${target}</span> <b>$${b.amount}</b>`
+        }).join('<br>')
+      : ''
+
     hud.innerHTML = [
-      `Phase: <b>${phase ?? '—'}</b>`,
-      point ? `Point: <b>${point}</b>` : '',
-      chips != null ? `Chips: <b>${chips}</b>` : '',
+      `<span style="background:${phaseColor};padding:1px 6px;border-radius:3px">${phaseLabel}</span>`,
+      chips != null ? `Chips: <b>$${chips}</b>` : '',
       shooter ? `Shooter: <b>${shooter}</b>` : '',
-      lastRoll ? `Last roll: <b>${lastRoll}</b>` : '',
-      message ? `<span style="color:#ffcc00">${message}</span>` : '',
+      lastRoll ? `Roll: <b>${lastRoll}</b>` : '',
+      betsHtml,
     ].filter(Boolean).join('<br>')
   }
 
-  return { update }
+  return { update, showFlash }
 }
 
 export function createAuthUI(onLogin) {
