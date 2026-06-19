@@ -25,6 +25,20 @@ const PIP_LAYOUTS = {
   6: [[L, T], [R, T], [L, M], [R, M], [L, B], [R, B]],
 }
 
+function roundedRect(ctx, x, y, w, h, r) {
+  ctx.beginPath()
+  ctx.moveTo(x + r, y)
+  ctx.lineTo(x + w - r, y)
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r)
+  ctx.lineTo(x + w, y + h - r)
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h)
+  ctx.lineTo(x + r, y + h)
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r)
+  ctx.lineTo(x, y + r)
+  ctx.quadraticCurveTo(x, y, x + r, y)
+  ctx.closePath()
+}
+
 function makePipTexture(pips) {
   const size = 128
   const r = 10
@@ -34,13 +48,13 @@ function makePipTexture(pips) {
 
   // Background
   ctx.fillStyle = '#f5f5f0'
-  ctx.roundRect(2, 2, size - 4, size - 4, 14)
+  roundedRect(ctx, 2, 2, size - 4, size - 4, 14)
   ctx.fill()
 
   // Border
   ctx.strokeStyle = '#ccc'
   ctx.lineWidth = 2
-  ctx.roundRect(2, 2, size - 4, size - 4, 14)
+  roundedRect(ctx, 2, 2, size - 4, size - 4, 14)
   ctx.stroke()
 
   // Pips

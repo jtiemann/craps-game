@@ -153,13 +153,16 @@ createAuthUI((token, username, spectate = false) => {
   socket.on('roll_start', async ({ die1, die2, timestamp }) => {
     animating = true
     btnRoll.disabled = true
-    const delay = Math.max(0, timestamp - Date.now())
-    if (delay > 0) await new Promise(r => setTimeout(r, delay))
-    await throwDice(die1Mesh, die2Mesh, die1, die2)
-    animating = false
-    if (pendingResolved) {
-      applyRollResolved(pendingResolved)
-      pendingResolved = null
+    try {
+      const delay = Math.max(0, timestamp - Date.now())
+      if (delay > 0) await new Promise(r => setTimeout(r, delay))
+      await throwDice(die1Mesh, die2Mesh, die1, die2)
+    } finally {
+      animating = false
+      if (pendingResolved) {
+        applyRollResolved(pendingResolved)
+        pendingResolved = null
+      }
     }
   })
 
