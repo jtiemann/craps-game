@@ -219,7 +219,7 @@ createAuthUI((token, username, spectate = false) => {
     }
   })
 
-  socket.on('error', (err) => hud.update({ message: `Error: ${err.message}` }))
+  socket.on('error', (err) => hud.showFlash(err.message || 'Error', '#ff4444'))
 })
 
 function makeBtn(label, bg) {
