@@ -172,6 +172,17 @@ createAuthUI((token, username, spectate = false) => {
     const me = table_state.players.find(p => p.username === myUsername)
     const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
 
+    const MSG = {
+      natural:     ['Winner!',                      '#2aff80'],
+      craps:       ['Loser',                        '#ff4444'],
+      point_set:   [`Point is ${table_state.point}`, '#ffcc00'],
+      point_made:  ['Winner!',                      '#2aff80'],
+      seven_out:   ['Seven Out — Loser',            '#ff4444'],
+      roll:        [`Point remains ${table_state.point}`, '#aaaaaa'],
+    }
+    const [msg, color] = MSG[event] ?? []
+    if (msg) hud.showFlash(msg, color)
+
     hud.update({
       phase: table_state.phase,
       point: table_state.point,
