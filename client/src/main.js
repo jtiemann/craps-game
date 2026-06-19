@@ -124,7 +124,9 @@ createAuthUI((token, username, spectate = false) => {
   }
   document.body.appendChild(controls)
 
-  socket.on('connect', () => socket.emit(isSpectator ? 'join_as_spectator' : 'join_table'))
+  const joinEvent = isSpectator ? 'join_as_spectator' : 'join_table'
+  socket.on('connect', () => socket.emit(joinEvent))
+  if (socket.connected) socket.emit(joinEvent)
   socket.on('reconnected', (state) => { hud.showFlash('Reconnected!', '#4af'); applyTableState(state) })
   socket.on('connect_error', (err) => hud.update({ phase: 'error' }))
 
