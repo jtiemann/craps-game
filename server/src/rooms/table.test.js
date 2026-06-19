@@ -164,3 +164,49 @@ describe('Shooter model', () => {
     expect(t.isShooter('s1')).toBe(true) // still s1
   })
 })
+
+describe('T16 — server-side validation', () => {
+  it('placeBet throws INVALID_BET_TYPE for unknown bet string', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    expect(() => t.placeBet('s1', 'bogus_bet', 10))
+      .toThrow(expect.objectContaining({ code: 'INVALID_BET_TYPE' }))
+  })
+
+  it('placeBet throws DUPLICATE_BET for second pass_line', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'pass_line', 10)
+    expect(() => t.placeBet('s1', 'pass_line', 10))
+      .toThrow(expect.objectContaining({ code: 'DUPLICATE_BET' }))
+  })
+
+  it('placeBet throws DUPLICATE_BET for second dont_pass', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'dont_pass', 10)
+    expect(() => t.placeBet('s1', 'dont_pass', 10))
+      .toThrow(expect.objectContaining({ code: 'DUPLICATE_BET' }))
+  })
+
+  it('shooterHasLineBet returns false when shooter has only field bet', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'field', 10)
+    expect(t.shooterHasLineBet()).toBe(false)
+  })
+
+  it('shooterHasLineBet returns true when shooter has pass_line', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'pass_line', 10)
+    expect(t.shooterHasLineBet()).toBe(true)
+  })
+
+  it('shooterHasLineBet returns true when shooter has dont_pass', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'dont_pass', 10)
+    expect(t.shooterHasLineBet()).toBe(true)
+  })
+})

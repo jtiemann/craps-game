@@ -53,8 +53,16 @@ io.on('connection', (socket) => {
 
   socket.on(P.READY_FOR_ROLL, () => {
     try {
+      if (!table._shooterSocketId) {
+        socket.emit(P.ERROR, { message: 'No shooter at table', code: 'NO_SHOOTER' })
+        return
+      }
       if (!table.isShooter(socket.id)) {
         socket.emit(P.ERROR, { message: 'Not your turn to shoot', code: 'NOT_SHOOTER' })
+        return
+      }
+      if (!table.shooterHasLineBet()) {
+        socket.emit(P.ERROR, { message: "Shooter must have a Pass Line or Don't Pass bet", code: 'SHOOTER_NEEDS_LINE_BET' })
         return
       }
       const { die1, die2, total, event, resolved, updates } = table.roll()

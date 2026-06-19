@@ -13,6 +13,8 @@ for (let d1 = 1; d1 <= 6; d1++) {
   }
 }
 
+const ALL_BET_TYPES = new Set(Object.values(BET_TYPES))
+
 const PLACEABLE_COME_OUT = new Set([BET_TYPES.PASS_LINE, BET_TYPES.DONT_PASS, BET_TYPES.FIELD,
   BET_TYPES.ANY_SEVEN, BET_TYPES.ANY_CRAPS, BET_TYPES.YO, BET_TYPES.ACES,
   BET_TYPES.ACE_DEUCE, BET_TYPES.BOXCARS, BET_TYPES.HORN])
@@ -23,6 +25,9 @@ const PLACEABLE_POINT = new Set([BET_TYPES.PASS_ODDS, BET_TYPES.DONT_PASS_ODDS,
   BET_TYPES.FIELD, BET_TYPES.ANY_SEVEN, BET_TYPES.ANY_CRAPS, BET_TYPES.YO,
   BET_TYPES.ACES, BET_TYPES.ACE_DEUCE, BET_TYPES.BOXCARS, BET_TYPES.HORN,
   BET_TYPES.BIG_6, BET_TYPES.BIG_8])
+
+// Bets a player may hold only one of at a time
+const SINGLE_BET_TYPES = new Set([BET_TYPES.PASS_LINE, BET_TYPES.DONT_PASS])
 
 export class Table {
   constructor(id, maxPlayers = 8, rollFn = null) {
@@ -81,6 +86,7 @@ export class Table {
     if (this.spectators.has(socketId)) throw Object.assign(new Error('Spectators cannot bet'), { code: 'SPECTATOR_CANNOT_BET' })
     const player = this.players.get(socketId)
     if (!player) throw Object.assign(new Error('Not at table'), { code: 'NOT_AT_TABLE' })
+    if (!ALL_BET_TYPES.has(betType)) throw Object.assign(new Error(`Unknown bet type: ${betType}`), { code: 'INVALID_BET_TYPE' })
     if (amount <= 0) throw Object.assign(new Error('Amount must be positive'), { code: 'INVALID_AMOUNT' })
     if (player.chipBalance < amount) throw Object.assign(new Error('Insufficient chips'), { code: 'INSUFFICIENT_CHIPS' })
 
@@ -89,12 +95,23 @@ export class Table {
       throw Object.assign(new Error(`${betType} not allowed in ${this.gameState.phase} phase`), { code: 'INVALID_PHASE' })
     }
 
+    if (SINGLE_BET_TYPES.has(betType) && this.bets.some(b => b.socketId === socketId && b.type === betType)) {
+      throw Object.assign(new Error(`Already have a ${betType} bet`), { code: 'DUPLICATE_BET' })
+    }
+
     player.chipBalance -= amount
     updateChipBalance(player.userId, player.chipBalance)
 
     const bet = { id: randomUUID(), socketId, playerId: player.userId, type: betType, amount, target: null }
     this.bets.push(bet)
     return bet
+  }
+
+  shooterHasLineBet() {
+    return this.bets.some(b =>
+      b.socketId === this._shooterSocketId &&
+      (b.type === BET_TYPES.PASS_LINE || b.type === BET_TYPES.DONT_PASS)
+    )
   }
 
   roll() {

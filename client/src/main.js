@@ -135,8 +135,9 @@ createAuthUI((token, username, spectate = false) => {
     if (!isSpectator) {
       const amShooter = state.shooter_socket_id === socket.id
       const myBets = state.bets.filter(b => b.socketId === socket.id)
-      btnRoll.disabled = !amShooter || myBets.length === 0
-      btnRoll.title = amShooter ? '' : `Shooter: ${shooter?.username ?? '?'}`
+      const hasLineBet = myBets.some(b => b.type === 'pass_line' || b.type === 'dont_pass')
+      btnRoll.disabled = !amShooter || !hasLineBet
+      btnRoll.title = amShooter ? (hasLineBet ? '' : 'Place a Pass Line or Don\'t Pass bet first') : `Shooter: ${shooter?.username ?? '?'}`
     }
   }
 
@@ -178,7 +179,8 @@ createAuthUI((token, username, spectate = false) => {
     if (!isSpectator) {
       const amShooter = table_state.shooter_socket_id === socket.id
       const myBets = table_state.bets.filter(b => b.socketId === socket.id)
-      btnRoll.disabled = !amShooter || myBets.length === 0
+      const hasLineBet = myBets.some(b => b.type === 'pass_line' || b.type === 'dont_pass')
+      btnRoll.disabled = !amShooter || !hasLineBet
     }
   })
 
