@@ -46,3 +46,80 @@ describe('Table', () => {
     expect(state.players).toHaveLength(1) // snapshot, not live
   })
 })
+
+describe('Shooter model', () => {
+  it('first player to join is the shooter', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    expect(t.isShooter('s1')).toBe(true)
+    expect(t.getState().shooter_socket_id).toBe('s1')
+  })
+
+  it('second player is NOT the shooter', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.addPlayer('s2', 'u2', 'bob', 1000)
+    expect(t.isShooter('s1')).toBe(true)
+    expect(t.isShooter('s2')).toBe(false)
+  })
+
+  it('shooter advances to next player on seven_out', () => {
+    const rolls = [
+      { die1: 2, die2: 2 }, // come_out → point_set(4)
+      { die1: 3, die2: 4 }, // seven_out → advance shooter
+    ]
+    const t = new Table('t1', 8, () => rolls.shift())
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.addPlayer('s2', 'u2', 'bob', 1000)
+    t.roll() // point_set
+    t.roll() // seven_out
+    expect(t.isShooter('s1')).toBe(false)
+    expect(t.isShooter('s2')).toBe(true)
+    expect(t.getState().shooter_socket_id).toBe('s2')
+  })
+
+  it('shooter wraps around (last player → first on next seven_out)', () => {
+    const rolls = [
+      { die1: 2, die2: 2 }, // point_set(4)
+      { die1: 3, die2: 4 }, // seven_out → s2 shoots
+      { die1: 2, die2: 2 }, // point_set(4)
+      { die1: 3, die2: 4 }, // seven_out → back to s1
+    ]
+    const t = new Table('t1', 8, () => rolls.shift())
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.addPlayer('s2', 'u2', 'bob', 1000)
+    t.roll(); t.roll() // s2 now shooting
+    t.roll(); t.roll() // back to s1
+    expect(t.isShooter('s1')).toBe(true)
+  })
+
+  it('shooter advances when current shooter leaves', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.addPlayer('s2', 'u2', 'bob', 1000)
+    t.removePlayer('s1')
+    expect(t.isShooter('s2')).toBe(true)
+  })
+
+  it('shooter is null when all players leave', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.removePlayer('s1')
+    expect(t.getState().shooter_socket_id).toBeNull()
+  })
+
+  it('shooter does NOT advance on natural or point_made', () => {
+    const rolls = [
+      { die1: 3, die2: 4 }, // come_out: natural 7
+      { die1: 2, die2: 2 }, // point_set(4)
+      { die1: 2, die2: 2 }, // point_made(4)
+    ]
+    const t = new Table('t1', 8, () => rolls.shift())
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.addPlayer('s2', 'u2', 'bob', 1000)
+    t.roll() // natural
+    t.roll() // point_set
+    t.roll() // point_made
+    expect(t.isShooter('s1')).toBe(true) // still s1
+  })
+})

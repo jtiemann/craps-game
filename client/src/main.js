@@ -120,28 +120,39 @@ createAuthUI((token, username) => {
 
   socket.on('table_state', (state) => {
     const me = state.players.find(p => p.username === myUsername)
-    hud.update({ phase: state.phase, point: state.point, chips: me?.chipBalance })
+    const shooter = state.players.find(p => p.socketId === state.shooter_socket_id)
+    hud.update({ phase: state.phase, point: state.point, chips: me?.chipBalance, shooter: shooter?.username })
     updateBetVisuals(state.bets)
+    const amShooter = state.shooter_socket_id === socket.id
     const myBets = state.bets.filter(b => b.socketId === socket.id)
-    btnRoll.disabled = myBets.length === 0 || state.phase === 'come_out'
+    btnRoll.disabled = !amShooter || myBets.length === 0
+    btnRoll.title = amShooter ? '' : `Shooter: ${shooter?.username ?? '?'}`
   })
 
   socket.on('bet_placed', ({ table_state }) => {
     const me = table_state.players.find(p => p.username === myUsername)
-    hud.update({ phase: table_state.phase, point: table_state.point, chips: me?.chipBalance })
+    const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
+    hud.update({ phase: table_state.phase, point: table_state.point, chips: me?.chipBalance, shooter: shooter?.username })
     updateBetVisuals(table_state.bets)
-    btnRoll.disabled = false
+    const amShooter = table_state.shooter_socket_id === socket.id
+    const myBets = table_state.bets.filter(b => b.socketId === socket.id)
+    btnRoll.disabled = !amShooter || myBets.length === 0
   })
 
-  socket.on('roll_start', async ({ die1, die2 }) => {
+  socket.on('roll_start', async ({ die1, die2, timestamp }) => {
     animating = true
     btnRoll.disabled = true
+    // Sync: delay start so all clients begin the animation at the same wall-clock time
+    const delay = Math.max(0, timestamp - Date.now())
+    if (delay > 0) await new Promise(r => setTimeout(r, delay))
     await throwDice(die1Mesh, die2Mesh, die1, die2)
     animating = false
   })
 
   socket.on('roll_resolved', ({ die1, die2, total, event, table_state }) => {
     const me = table_state.players.find(p => p.username === myUsername)
+    const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
+    const amShooter = table_state.shooter_socket_id === socket.id
     const eventMsg = {
       natural: `Natural! ${total} wins!`,
       craps: `Craps! ${total} loses.`,
@@ -157,11 +168,12 @@ createAuthUI((token, username) => {
       chips: me?.chipBalance,
       lastRoll: `${die1} + ${die2} = ${total}`,
       message: eventMsg,
+      shooter: shooter?.username,
     })
 
     updateBetVisuals(table_state.bets)
     const myBets = table_state.bets.filter(b => b.socketId === socket.id)
-    btnRoll.disabled = myBets.length === 0 || table_state.phase === 'come_out'
+    btnRoll.disabled = !amShooter || myBets.length === 0
   })
 
   socket.on('chip_update', ({ player_id, chip_balance }) => {

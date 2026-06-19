@@ -8,11 +8,12 @@ export function createHUD() {
   `
   document.body.appendChild(hud)
 
-  function update({ phase, point, chips, lastRoll, message }) {
+  function update({ phase, point, chips, lastRoll, message, shooter } = {}) {
     hud.innerHTML = [
       `Phase: <b>${phase ?? '—'}</b>`,
       point ? `Point: <b>${point}</b>` : '',
       chips != null ? `Chips: <b>${chips}</b>` : '',
+      shooter ? `Shooter: <b>${shooter}</b>` : '',
       lastRoll ? `Last roll: <b>${lastRoll}</b>` : '',
       message ? `<span style="color:#ffcc00">${message}</span>` : '',
     ].filter(Boolean).join('<br>')

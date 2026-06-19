@@ -32,6 +32,8 @@ export class Table {
     this.bets = []
     this.gameState = createGameState()
     this._rollFn = rollFn ?? (() => rollDice(HOUSE_WEIGHTS))
+    this._shooterSocketId = null
+    this._shooterOrder = []  // insertion-order socketIds for rotation
   }
 
   addPlayer(socketId, userId, username, chipBalance) {
@@ -39,11 +41,27 @@ export class Table {
       throw Object.assign(new Error('Table is full'), { code: 'TABLE_FULL' })
     }
     this.players.set(socketId, { socketId, userId, username, chipBalance })
+    this._shooterOrder.push(socketId)
+    if (!this._shooterSocketId) this._shooterSocketId = socketId
   }
 
   removePlayer(socketId) {
     this.players.delete(socketId)
     this.bets = this.bets.filter(b => b.socketId !== socketId)
+    this._shooterOrder = this._shooterOrder.filter(id => id !== socketId)
+    if (this._shooterSocketId === socketId) this._advanceShooter()
+  }
+
+  isShooter(socketId) {
+    return this._shooterSocketId === socketId
+  }
+
+  _advanceShooter() {
+    const active = this._shooterOrder.filter(id => this.players.has(id))
+    this._shooterOrder = active
+    if (active.length === 0) { this._shooterSocketId = null; return }
+    const idx = active.indexOf(this._shooterSocketId)
+    this._shooterSocketId = active[(idx + 1) % active.length]
   }
 
   placeBet(socketId, betType, amount) {
@@ -87,6 +105,9 @@ export class Table {
 
     this.gameState = newState
 
+    // Dice pass to next player on seven-out
+    if (event === 'seven_out') this._advanceShooter()
+
     return { die1, die2, total, event, resolved, updates }
   }
 
@@ -95,6 +116,7 @@ export class Table {
       id: this.id,
       phase: this.gameState.phase,
       point: this.gameState.point,
+      shooter_socket_id: this._shooterSocketId,
       players: Array.from(this.players.values()),
       bets: [...this.bets],
     }

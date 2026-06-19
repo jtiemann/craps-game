@@ -43,6 +43,10 @@ io.on('connection', (socket) => {
 
   socket.on(P.READY_FOR_ROLL, () => {
     try {
+      if (!table.isShooter(socket.id)) {
+        socket.emit(P.ERROR, { message: 'Not your turn to shoot', code: 'NOT_SHOOTER' })
+        return
+      }
       const { die1, die2, total, event, resolved, updates } = table.roll()
       const rollTimestamp = Date.now()
       io.to('main').emit(P.ROLL_START, { die1, die2, total, timestamp: rollTimestamp })
