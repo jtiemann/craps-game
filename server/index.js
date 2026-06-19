@@ -32,6 +32,35 @@ io.on('connection', (socket) => {
     }
   })
 
+  socket.on(P.PLACE_BET, ({ bet_type, amount }) => {
+    try {
+      const bet = table.placeBet(socket.id, bet_type, amount)
+      io.to('main').emit(P.BET_PLACED, { bet, table_state: table.getState() })
+    } catch (err) {
+      socket.emit(P.ERROR, { message: err.message, code: err.code })
+    }
+  })
+
+  socket.on(P.READY_FOR_ROLL, () => {
+    try {
+      const { die1, die2, total, event, resolved, updates } = table.roll()
+      const rollTimestamp = Date.now()
+      io.to('main').emit(P.ROLL_START, { die1, die2, total, timestamp: rollTimestamp })
+      io.to('main').emit(P.ROLL_RESOLVED, { die1, die2, total, event, resolved, updates, table_state: table.getState() })
+      // Chip updates
+      for (const res of resolved) {
+        if (res.payout > 0) {
+          const player = table.getState().players.find(p => p.userId === res.playerId)
+          if (player) {
+            io.to('main').emit(P.CHIP_UPDATE, { player_id: res.playerId, chip_balance: player.chipBalance })
+          }
+        }
+      }
+    } catch (err) {
+      socket.emit(P.ERROR, { message: err.message, code: err.code })
+    }
+  })
+
   socket.on('disconnect', () => {
     console.log('client disconnected', socket.id)
     table.removePlayer(socket.id)
