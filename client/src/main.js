@@ -168,24 +168,9 @@ createAuthUI((token, username, spectate = false) => {
     }
   })
 
-  const FLASH_COLOR = {
-    natural: '#2aff80', craps: '#ff4444', point_set: '#ffcc00',
-    point_made: '#2aff80', seven_out: '#ff4444', roll: '#ffffff',
-  }
-
   function applyRollResolved({ die1, die2, total, event, table_state }) {
     const me = table_state.players.find(p => p.username === myUsername)
     const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
-    const eventMsg = {
-      natural: `Natural! ${total}`,
-      craps: `Craps! ${total}`,
-      point_set: `Point: ${table_state.point}`,
-      point_made: `Point Made!`,
-      seven_out: `Seven Out!`,
-      roll: null,
-    }[event] ?? null
-
-    if (eventMsg) hud.showFlash(eventMsg, FLASH_COLOR[event] ?? '#fff')
 
     hud.update({
       phase: table_state.phase,
