@@ -210,3 +210,45 @@ describe('T16 — server-side validation', () => {
     expect(t.shooterHasLineBet()).toBe(true)
   })
 })
+
+describe('T17 — reconnection', () => {
+  it('reconnectPlayer swaps socketId in players map', () => {
+    const t = new Table('t1')
+    t.addPlayer('old', 'u1', 'alice', 1000)
+    const ok = t.reconnectPlayer('old', 'new')
+    expect(ok).toBe(true)
+    expect(t.players.has('new')).toBe(true)
+    expect(t.players.has('old')).toBe(false)
+    expect(t.players.get('new').socketId).toBe('new')
+  })
+
+  it('reconnectPlayer updates bets socketId', () => {
+    const t = new Table('t1')
+    t.addPlayer('old', 'u1', 'alice', 1000)
+    t.placeBet('old', 'pass_line', 10)
+    t.reconnectPlayer('old', 'new')
+    expect(t.bets[0].socketId).toBe('new')
+  })
+
+  it('reconnectPlayer preserves shooter status', () => {
+    const t = new Table('t1')
+    t.addPlayer('old', 'u1', 'alice', 1000)
+    t.reconnectPlayer('old', 'new')
+    expect(t.isShooter('new')).toBe(true)
+    expect(t.getState().shooter_socket_id).toBe('new')
+  })
+
+  it('reconnectPlayer returns false for unknown socketId', () => {
+    const t = new Table('t1')
+    expect(t.reconnectPlayer('ghost', 'new')).toBe(false)
+  })
+
+  it('reconnectSpectator swaps socketId', () => {
+    const t = new Table('t1')
+    t.addSpectator('old', 'bob')
+    const ok = t.reconnectSpectator('old', 'new')
+    expect(ok).toBe(true)
+    expect(t.spectators.has('new')).toBe(true)
+    expect(t.spectators.has('old')).toBe(false)
+  })
+})

@@ -70,6 +70,27 @@ export class Table {
     return this.spectators.has(socketId)
   }
 
+  reconnectPlayer(oldSocketId, newSocketId) {
+    const player = this.players.get(oldSocketId)
+    if (!player) return false
+    const updated = { ...player, socketId: newSocketId }
+    this.players.delete(oldSocketId)
+    this.players.set(newSocketId, updated)
+    this.bets = this.bets.map(b => b.socketId === oldSocketId ? { ...b, socketId: newSocketId } : b)
+    this._shooterOrder = this._shooterOrder.map(id => id === oldSocketId ? newSocketId : id)
+    if (this._shooterSocketId === oldSocketId) this._shooterSocketId = newSocketId
+    return true
+  }
+
+  reconnectSpectator(oldSocketId, newSocketId) {
+    const spectator = this.spectators.get(oldSocketId)
+    if (!spectator) return false
+    const updated = { ...spectator, socketId: newSocketId }
+    this.spectators.delete(oldSocketId)
+    this.spectators.set(newSocketId, updated)
+    return true
+  }
+
   isShooter(socketId) {
     return this._shooterSocketId === socketId
   }

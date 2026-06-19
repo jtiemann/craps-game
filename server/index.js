@@ -18,12 +18,35 @@ const io = new Server(httpServer, {
 io.use(socketAuthMiddleware)
 
 const table = new Table('main')
+const RECONNECT_HOLD_MS = 30_000
+
+// userId → { oldSocketId, timer, isSpectator }
+const pendingReconnect = new Map()
+
+function clearReconnectHold(userId) {
+  const held = pendingReconnect.get(userId)
+  if (held) {
+    clearTimeout(held.timer)
+    pendingReconnect.delete(userId)
+  }
+}
 
 io.on('connection', (socket) => {
   console.log('client connected', socket.id, socket.username)
 
   socket.on(P.JOIN_TABLE, () => {
     try {
+      // Restore session if disconnected within hold window
+      const held = pendingReconnect.get(socket.userId)
+      if (held && !held.isSpectator) {
+        clearReconnectHold(socket.userId)
+        if (table.reconnectPlayer(held.oldSocketId, socket.id)) {
+          socket.join('main')
+          socket.emit(P.RECONNECTED, table.getState())
+          io.to('main').emit(P.TABLE_STATE, table.getState())
+          return
+        }
+      }
       table.addPlayer(socket.id, socket.userId, socket.username, socket.chipBalance)
       socket.join('main')
       io.to('main').emit(P.TABLE_STATE, table.getState())
@@ -34,6 +57,15 @@ io.on('connection', (socket) => {
 
   socket.on(P.JOIN_AS_SPECTATOR, () => {
     try {
+      const held = pendingReconnect.get(socket.userId)
+      if (held && held.isSpectator) {
+        clearReconnectHold(socket.userId)
+        if (table.reconnectSpectator(held.oldSocketId, socket.id)) {
+          socket.join('main')
+          socket.emit(P.RECONNECTED, table.getState())
+          return
+        }
+      }
       table.addSpectator(socket.id, socket.username)
       socket.join('main')
       socket.emit(P.TABLE_STATE, table.getState())
@@ -85,12 +117,20 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     console.log('client disconnected', socket.id)
-    table.removePlayer(socket.id)
-    table.removeSpectator(socket.id)
-    const anyoneLeft = table.players.size > 0 || table.spectators.size > 0
-    if (anyoneLeft) {
-      io.to('main').emit(P.TABLE_STATE, table.getState())
-    }
+    const isPlayer = table.players.has(socket.id)
+    const isSpec = table.spectators.has(socket.id)
+    if (!isPlayer && !isSpec) return
+
+    // Hold session for 30s to allow reconnection
+    const timer = setTimeout(() => {
+      pendingReconnect.delete(socket.userId)
+      table.removePlayer(socket.id)
+      table.removeSpectator(socket.id)
+      const anyoneLeft = table.players.size > 0 || table.spectators.size > 0
+      if (anyoneLeft) io.to('main').emit(P.TABLE_STATE, table.getState())
+    }, RECONNECT_HOLD_MS)
+
+    pendingReconnect.set(socket.userId, { oldSocketId: socket.id, timer, isSpectator: isSpec })
   })
 })
 
