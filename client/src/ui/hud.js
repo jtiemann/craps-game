@@ -25,7 +25,7 @@ export function createHUD() {
   const flash = document.createElement('div')
   flash.id = 'outcome-flash'
   flash.style.cssText = `
-    position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    position:fixed; top:18%; left:50%; transform:translate(-50%,-50%);
     font:bold 28px/1.2 monospace; color:#fff; text-align:center;
     text-shadow:0 2px 8px rgba(0,0,0,.8); pointer-events:none; z-index:50;
     opacity:0; transition:opacity 0.15s;
