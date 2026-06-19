@@ -148,6 +148,8 @@ createAuthUI((token, username, spectate = false) => {
   socket.on('table_state', applyTableState)
   socket.on('bet_placed', ({ table_state }) => applyTableState(table_state))
 
+  let pendingResolved = null
+
   socket.on('roll_start', async ({ die1, die2, timestamp }) => {
     animating = true
     btnRoll.disabled = true
@@ -155,6 +157,10 @@ createAuthUI((token, username, spectate = false) => {
     if (delay > 0) await new Promise(r => setTimeout(r, delay))
     await throwDice(die1Mesh, die2Mesh, die1, die2)
     animating = false
+    if (pendingResolved) {
+      applyRollResolved(pendingResolved)
+      pendingResolved = null
+    }
   })
 
   const FLASH_COLOR = {
@@ -162,7 +168,7 @@ createAuthUI((token, username, spectate = false) => {
     point_made: '#2aff80', seven_out: '#ff4444', roll: '#ffffff',
   }
 
-  socket.on('roll_resolved', ({ die1, die2, total, event, table_state }) => {
+  function applyRollResolved({ die1, die2, total, event, table_state }) {
     const me = table_state.players.find(p => p.username === myUsername)
     const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
     const eventMsg = {
@@ -192,6 +198,14 @@ createAuthUI((token, username, spectate = false) => {
       const myBets = table_state.bets.filter(b => b.socketId === socket.id)
       const hasLineBet = myBets.some(b => b.type === 'pass_line' || b.type === 'dont_pass')
       btnRoll.disabled = !amShooter || !hasLineBet
+    }
+  }
+
+  socket.on('roll_resolved', (data) => {
+    if (animating) {
+      pendingResolved = data
+    } else {
+      applyRollResolved(data)
     }
   })
 
