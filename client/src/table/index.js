@@ -99,3 +99,46 @@ function makeTextSprite(text, scale) {
 export function highlightBetArea(mesh, on) {
   mesh.material.color.setHex(on ? BET_HOVER : mesh.userData.baseMat.color.getHex())
 }
+
+// Place or remove a chip stack marker on a bet area mesh.
+// count: number of bets on this area; 0 removes the marker.
+export function setChipMarker(mesh, count) {
+  const toRemove = mesh.children.filter(c => c.userData.isChip)
+  toRemove.forEach(c => { c.geometry.dispose(); c.material.dispose(); mesh.remove(c) })
+
+  for (let i = 0; i < Math.min(count, 4); i++) {
+    const chipGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.1, 16)
+    const chipMat = new THREE.MeshLambertMaterial({ color: 0xffd700 })
+    const chip = new THREE.Mesh(chipGeo, chipMat)
+    chip.position.set(0, 0.12 + i * 0.11, 0)
+    chip.userData.isChip = true
+    mesh.add(chip)
+  }
+}
+
+// Show on-point come/dont_come pucks on number strip areas.
+// bets: full bets array from table_state; betMeshes: all bet area meshes.
+export function updateComePucks(betMeshes, bets) {
+  for (const mesh of betMeshes) {
+    const toRemove = mesh.children.filter(c => c.userData.isPuck)
+    toRemove.forEach(c => { c.geometry.dispose(); c.material.dispose(); mesh.remove(c) })
+  }
+
+  const areaMap = {}
+  for (const mesh of betMeshes) areaMap[mesh.userData.betAreaId] = mesh
+
+  for (const bet of bets) {
+    if (!bet.target || (bet.type !== 'come' && bet.type !== 'dont_come')) continue
+    const mesh = areaMap[`place_${bet.target}`]
+    if (!mesh) continue
+    const existingPucks = mesh.children.filter(c => c.userData.isPuck)
+    if (existingPucks.length >= 3) continue
+    const color = bet.type === 'come' ? 0xfafafa : 0x8b0000
+    const geo = new THREE.CylinderGeometry(0.15, 0.15, 0.06, 16)
+    const mat = new THREE.MeshLambertMaterial({ color })
+    const puck = new THREE.Mesh(geo, mat)
+    puck.position.set(-0.25 + existingPucks.length * 0.2, 0.24, -0.25)
+    puck.userData.isPuck = true
+    mesh.add(puck)
+  }
+}
