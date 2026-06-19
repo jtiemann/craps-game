@@ -25,12 +25,13 @@ const PLACEABLE_POINT = new Set([BET_TYPES.PASS_ODDS, BET_TYPES.DONT_PASS_ODDS,
   BET_TYPES.BIG_6, BET_TYPES.BIG_8])
 
 export class Table {
-  constructor(id, maxPlayers = 8) {
+  constructor(id, maxPlayers = 8, rollFn = null) {
     this.id = id
     this.maxPlayers = maxPlayers
     this.players = new Map()
     this.bets = []
     this.gameState = createGameState()
+    this._rollFn = rollFn ?? (() => rollDice(HOUSE_WEIGHTS))
   }
 
   addPlayer(socketId, userId, username, chipBalance) {
@@ -65,17 +66,12 @@ export class Table {
   }
 
   roll() {
-    const { die1, die2 } = rollDice(HOUSE_WEIGHTS)
+    const { die1, die2 } = this._rollFn()
     const total = die1 + die2
 
-    let event
-    let { newState } = this.gameState.phase === 'come_out'
+    const { event, newState } = this.gameState.phase === 'come_out'
       ? applyComeOutRoll(this.gameState, die1, die2)
       : applyPointRoll(this.gameState, die1, die2)
-
-    event = this.gameState.phase === 'come_out'
-      ? applyComeOutRoll(this.gameState, die1, die2).event
-      : applyPointRoll(this.gameState, die1, die2).event
 
     const { resolved, remaining, updates } = resolveAllBets(this.bets, die1, die2, this.gameState)
     this.bets = remaining
