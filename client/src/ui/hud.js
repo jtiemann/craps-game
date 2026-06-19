@@ -42,7 +42,7 @@ export function createHUD() {
     flashTimer = setTimeout(() => { flash.style.opacity = '0' }, 1800)
   }
 
-  function update({ phase, point, chips, lastRoll, bets, mySocketId, shooter } = {}) {
+  function update({ phase, point, chips, bets, mySocketId, shooter } = {}) {
     const phaseColor = PHASE_COLOR[phase] ?? '#555'
     const phaseLabel = phase === 'come_out' ? 'Come Out' : phase === 'point' ? `Point: ${point}` : (phase ?? '—')
     const myBets = (bets ?? []).filter(b => b.socketId === mySocketId)
@@ -60,7 +60,6 @@ export function createHUD() {
       `<span style="background:${phaseColor};padding:1px 6px;border-radius:3px">${phaseLabel}</span>`,
       chips != null ? `Chips: <b>$${chips}</b>` : '',
       shooter ? `Shooter: <b>${shooter}</b>` : '',
-      lastRoll ? `Roll: <b>${lastRoll}</b>` : '',
       betsHtml,
     ].filter(Boolean).join('<br>')
   }

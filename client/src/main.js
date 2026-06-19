@@ -186,7 +186,6 @@ createAuthUI((token, username, spectate = false) => {
       phase: table_state.phase,
       point: table_state.point,
       chips: me?.chipBalance,
-      lastRoll: `${die1}+${die2}=${total}`,
       shooter: shooter?.username,
       bets: table_state.bets,
       mySocketId: socket.id,
