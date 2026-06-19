@@ -1,4 +1,5 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
+vi.mock('../auth/index.js', () => ({ updateChipBalance: vi.fn(), getUser: vi.fn() }))
 import { Table } from './table.js'
 
 describe('Table', () => {
@@ -44,6 +45,46 @@ describe('Table', () => {
     const state = t.getState()
     t.addPlayer('sock2', 'uid2', 'bob', 500)
     expect(state.players).toHaveLength(1) // snapshot, not live
+  })
+})
+
+describe('Spectator mode', () => {
+  it('addSpectator adds to spectators, not players', () => {
+    const t = new Table('t1')
+    t.addSpectator('s1', 'alice')
+    expect(t.spectators.size).toBe(1)
+    expect(t.players.size).toBe(0)
+    expect(t.isSpectator('s1')).toBe(true)
+  })
+
+  it('spectator appears in getState().spectators', () => {
+    const t = new Table('t1')
+    t.addSpectator('s1', 'alice')
+    const state = t.getState()
+    expect(state.spectators).toHaveLength(1)
+    expect(state.spectators[0]).toMatchObject({ socketId: 's1', username: 'alice' })
+  })
+
+  it('spectator is not in shooter order', () => {
+    const t = new Table('t1')
+    t.addSpectator('s1', 'alice')
+    expect(t._shooterOrder).toHaveLength(0)
+    expect(t.getState().shooter_socket_id).toBeNull()
+  })
+
+  it('removeSpectator removes from spectators', () => {
+    const t = new Table('t1')
+    t.addSpectator('s1', 'alice')
+    t.removeSpectator('s1')
+    expect(t.spectators.size).toBe(0)
+    expect(t.isSpectator('s1')).toBe(false)
+  })
+
+  it('placeBet throws SPECTATOR_CANNOT_BET for spectator', () => {
+    const t = new Table('t1')
+    t.addSpectator('s1', 'alice')
+    expect(() => t.placeBet('s1', 'pass_line', 10))
+      .toThrow(expect.objectContaining({ code: 'SPECTATOR_CANNOT_BET' }))
   })
 })
 

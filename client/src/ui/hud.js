@@ -34,14 +34,15 @@ export function createAuthUI(onLogin) {
       <h2 style="margin:0 0 16px">Craps</h2>
       <input id="auth-user" placeholder="Username" style="width:100%;box-sizing:border-box;padding:8px;margin-bottom:8px;border-radius:4px;border:none;font-size:14px"><br>
       <input id="auth-pass" type="password" placeholder="Password" style="width:100%;box-sizing:border-box;padding:8px;margin-bottom:12px;border-radius:4px;border:none;font-size:14px"><br>
-      <button id="auth-login" style="width:48%;padding:8px;border-radius:4px;border:none;background:#2a7a4c;color:#fff;cursor:pointer;font-size:14px">Login</button>
-      <button id="auth-register" style="width:48%;float:right;padding:8px;border-radius:4px;border:none;background:#3a5a8c;color:#fff;cursor:pointer;font-size:14px">Register</button>
+      <button id="auth-login" style="width:32%;padding:8px;border-radius:4px;border:none;background:#2a7a4c;color:#fff;cursor:pointer;font-size:14px">Login</button>
+      <button id="auth-register" style="width:32%;margin:0 2%;padding:8px;border-radius:4px;border:none;background:#3a5a8c;color:#fff;cursor:pointer;font-size:14px">Register</button>
+      <button id="auth-spectate" style="width:32%;padding:8px;border-radius:4px;border:none;background:#5a4a2c;color:#fff;cursor:pointer;font-size:14px">Watch</button>
       <p id="auth-error" style="color:#ff6b6b;margin:8px 0 0;font-size:12px"></p>
     </div>
   `
   document.body.appendChild(overlay)
 
-  async function submit(isRegister) {
+  async function submit(isRegister, spectate = false) {
     const username = document.getElementById('auth-user').value.trim()
     const password = document.getElementById('auth-pass').value
     const errEl = document.getElementById('auth-error')
@@ -63,7 +64,7 @@ export function createAuthUI(onLogin) {
         body: JSON.stringify({ username, password }),
       })).json()).token : data.token
       overlay.remove()
-      onLogin(token, username)
+      onLogin(token, username, spectate)
     } catch (e) {
       errEl.textContent = 'Connection error'
     }
@@ -71,5 +72,6 @@ export function createAuthUI(onLogin) {
 
   document.getElementById('auth-login').addEventListener('click', () => submit(false))
   document.getElementById('auth-register').addEventListener('click', () => submit(true))
+  document.getElementById('auth-spectate').addEventListener('click', () => submit(false, true))
   document.getElementById('auth-pass').addEventListener('keydown', e => { if (e.key === 'Enter') submit(false) })
 }

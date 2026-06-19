@@ -1,4 +1,5 @@
 export const JOIN_TABLE = 'join_table'
+export const JOIN_AS_SPECTATOR = 'join_as_spectator'
 export const TABLE_STATE = 'table_state'
 export const PLACE_BET = 'place_bet'
 export const BET_PLACED = 'bet_placed'

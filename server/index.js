@@ -32,6 +32,16 @@ io.on('connection', (socket) => {
     }
   })
 
+  socket.on(P.JOIN_AS_SPECTATOR, () => {
+    try {
+      table.addSpectator(socket.id, socket.username)
+      socket.join('main')
+      socket.emit(P.TABLE_STATE, table.getState())
+    } catch (err) {
+      socket.emit(P.ERROR, { message: err.message, code: err.code })
+    }
+  })
+
   socket.on(P.PLACE_BET, ({ bet_type, amount }) => {
     try {
       const bet = table.placeBet(socket.id, bet_type, amount)
@@ -68,7 +78,9 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('client disconnected', socket.id)
     table.removePlayer(socket.id)
-    if (table.players.size > 0) {
+    table.removeSpectator(socket.id)
+    const anyoneLeft = table.players.size > 0 || table.spectators.size > 0
+    if (anyoneLeft) {
       io.to('main').emit(P.TABLE_STATE, table.getState())
     }
   })

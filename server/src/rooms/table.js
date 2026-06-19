@@ -29,6 +29,7 @@ export class Table {
     this.id = id
     this.maxPlayers = maxPlayers
     this.players = new Map()
+    this.spectators = new Map()
     this.bets = []
     this.gameState = createGameState()
     this._rollFn = rollFn ?? (() => rollDice(HOUSE_WEIGHTS))
@@ -45,11 +46,23 @@ export class Table {
     if (!this._shooterSocketId) this._shooterSocketId = socketId
   }
 
+  addSpectator(socketId, username) {
+    this.spectators.set(socketId, { socketId, username })
+  }
+
   removePlayer(socketId) {
     this.players.delete(socketId)
     this.bets = this.bets.filter(b => b.socketId !== socketId)
     this._shooterOrder = this._shooterOrder.filter(id => id !== socketId)
     if (this._shooterSocketId === socketId) this._advanceShooter()
+  }
+
+  removeSpectator(socketId) {
+    this.spectators.delete(socketId)
+  }
+
+  isSpectator(socketId) {
+    return this.spectators.has(socketId)
   }
 
   isShooter(socketId) {
@@ -65,6 +78,7 @@ export class Table {
   }
 
   placeBet(socketId, betType, amount) {
+    if (this.spectators.has(socketId)) throw Object.assign(new Error('Spectators cannot bet'), { code: 'SPECTATOR_CANNOT_BET' })
     const player = this.players.get(socketId)
     if (!player) throw Object.assign(new Error('Not at table'), { code: 'NOT_AT_TABLE' })
     if (amount <= 0) throw Object.assign(new Error('Amount must be positive'), { code: 'INVALID_AMOUNT' })
@@ -118,6 +132,7 @@ export class Table {
       point: this.gameState.point,
       shooter_socket_id: this._shooterSocketId,
       players: Array.from(this.players.values()),
+      spectators: Array.from(this.spectators.values()),
       bets: [...this.bets],
     }
   }

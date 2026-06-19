@@ -52,6 +52,7 @@ let myUsername = ''
 let animating = false
 let socketRef = null
 let betAmount = 10
+let isSpectator = false
 
 // Refresh all visual bet state from table_state.bets
 function updateBetVisuals(bets) {
@@ -68,16 +69,17 @@ function updateBetVisuals(bets) {
   updateComePucks(betMeshes, bets)
 }
 
-createAuthUI((token, username) => {
+createAuthUI((token, username, spectate = false) => {
   myUsername = username
-  hud.update({ phase: 'joining table…' })
+  isSpectator = spectate
+  hud.update({ phase: spectate ? 'watching…' : 'joining table…' })
   const socket = connectSocket(token)
   socketRef = socket
   window._debug.socket = socket
 
-  // Click on a bet area → raycast + place_bet
+  // Click on a bet area → raycast + place_bet (spectators cannot bet)
   canvas.addEventListener('click', (e) => {
-    if (animating) return
+    if (animating || isSpectator) return
     pointer.x = (e.clientX / window.innerWidth) * 2 - 1
     pointer.y = -(e.clientY / window.innerHeight) * 2 + 1
     raycaster.setFromCamera(pointer, camera)
@@ -108,36 +110,38 @@ createAuthUI((token, username) => {
 
   const btnRoll = makeBtn('Roll', '#8b2a2a')
   btnRoll.disabled = true
-  controls.append(amountLabel, amountInput, btnRoll)
+
+  if (isSpectator) {
+    const watchLabel = document.createElement('span')
+    watchLabel.style.cssText = 'color:#aaa;font:13px monospace;font-style:italic;'
+    watchLabel.textContent = 'Watching'
+    controls.append(watchLabel)
+  } else {
+    controls.append(amountLabel, amountInput, btnRoll)
+    btnRoll.addEventListener('click', () => {
+      if (!animating) socket.emit('ready_for_roll')
+    })
+  }
   document.body.appendChild(controls)
 
-  btnRoll.addEventListener('click', () => {
-    if (!animating) socket.emit('ready_for_roll')
-  })
-
-  socket.on('connect', () => socket.emit('join_table'))
+  socket.on('connect', () => socket.emit(isSpectator ? 'join_as_spectator' : 'join_table'))
   socket.on('connect_error', (err) => hud.update({ phase: 'error', message: err.message }))
 
-  socket.on('table_state', (state) => {
+  function applyTableState(state) {
     const me = state.players.find(p => p.username === myUsername)
     const shooter = state.players.find(p => p.socketId === state.shooter_socket_id)
     hud.update({ phase: state.phase, point: state.point, chips: me?.chipBalance, shooter: shooter?.username })
     updateBetVisuals(state.bets)
-    const amShooter = state.shooter_socket_id === socket.id
-    const myBets = state.bets.filter(b => b.socketId === socket.id)
-    btnRoll.disabled = !amShooter || myBets.length === 0
-    btnRoll.title = amShooter ? '' : `Shooter: ${shooter?.username ?? '?'}`
-  })
+    if (!isSpectator) {
+      const amShooter = state.shooter_socket_id === socket.id
+      const myBets = state.bets.filter(b => b.socketId === socket.id)
+      btnRoll.disabled = !amShooter || myBets.length === 0
+      btnRoll.title = amShooter ? '' : `Shooter: ${shooter?.username ?? '?'}`
+    }
+  }
 
-  socket.on('bet_placed', ({ table_state }) => {
-    const me = table_state.players.find(p => p.username === myUsername)
-    const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
-    hud.update({ phase: table_state.phase, point: table_state.point, chips: me?.chipBalance, shooter: shooter?.username })
-    updateBetVisuals(table_state.bets)
-    const amShooter = table_state.shooter_socket_id === socket.id
-    const myBets = table_state.bets.filter(b => b.socketId === socket.id)
-    btnRoll.disabled = !amShooter || myBets.length === 0
-  })
+  socket.on('table_state', applyTableState)
+  socket.on('bet_placed', ({ table_state }) => applyTableState(table_state))
 
   socket.on('roll_start', async ({ die1, die2, timestamp }) => {
     animating = true
@@ -152,7 +156,6 @@ createAuthUI((token, username) => {
   socket.on('roll_resolved', ({ die1, die2, total, event, table_state }) => {
     const me = table_state.players.find(p => p.username === myUsername)
     const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
-    const amShooter = table_state.shooter_socket_id === socket.id
     const eventMsg = {
       natural: `Natural! ${total} wins!`,
       craps: `Craps! ${total} loses.`,
@@ -172,8 +175,11 @@ createAuthUI((token, username) => {
     })
 
     updateBetVisuals(table_state.bets)
-    const myBets = table_state.bets.filter(b => b.socketId === socket.id)
-    btnRoll.disabled = !amShooter || myBets.length === 0
+    if (!isSpectator) {
+      const amShooter = table_state.shooter_socket_id === socket.id
+      const myBets = table_state.bets.filter(b => b.socketId === socket.id)
+      btnRoll.disabled = !amShooter || myBets.length === 0
+    }
   })
 
   socket.on('chip_update', ({ player_id, chip_balance }) => {
