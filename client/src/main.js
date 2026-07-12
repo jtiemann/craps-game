@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { createScene } from './scene/index.js'
-import { createTable, highlightBetArea, setChipMarker, updateComePucks } from './table/index.js'
+import { createTable, highlightBetArea, setChipMarker, updateComePucks, updatePointPuck } from './table/index.js'
 import { createDieMesh } from './dice/mesh.js'
 import { throwDice } from './dice/animation.js'
 import { createHUD, createAuthUI } from './ui/hud.js'
@@ -9,7 +9,31 @@ import { announceCroupier } from './audio/index.js'
 
 const canvas = document.getElementById('canvas')
 const { scene, camera, controls } = createScene(canvas)
-const { betMeshes } = createTable(scene)
+const { betMeshes, pointPucks } = createTable(scene)
+
+// Region tracking so a bet shows only on the region where it was placed (the layout
+// mirrors every bet to both halves, so betType alone can't tell the two apart).
+const betRegion = new Map()          // bet.id -> regionId it was placed on
+let pendingRegions = []              // {betType, target, regionId} recorded at click time
+const primaryRegionByType = new Map()
+for (const m of betMeshes) {
+  if (!primaryRegionByType.has(m.userData.betType)) primaryRegionByType.set(m.userData.betType, m.userData.regionId)
+}
+function reconcileBetRegions(bets) {
+  const ids = new Set(bets.map(b => b.id))
+  for (const id of [...betRegion.keys()]) if (!ids.has(id)) betRegion.delete(id)
+  const myId = socketRef?.id
+  for (const bet of bets) {
+    if (bet.socketId !== myId || betRegion.has(bet.id)) continue
+    const i = pendingRegions.findIndex(p => p.betType === bet.type && (p.target ?? null) === (bet.target ?? null))
+    if (i >= 0) { betRegion.set(bet.id, pendingRegions[i].regionId); pendingRegions.splice(i, 1) }
+  }
+}
+// Region a bet renders on: where the local player clicked, else a default half so
+// other players' / reconnected bets still appear.
+function regionOf(bet) {
+  return betRegion.get(bet.id) ?? primaryRegionByType.get(bet.type) ?? null
+}
 const hud = createHUD()
 
 // Raycaster for bet-area hit-testing
@@ -39,7 +63,7 @@ canvas.addEventListener('pointermove', (e) => {
   if (hoveredMesh && hoveredMesh !== hit) highlightBetArea(hoveredMesh, false)
   if (hit && hit !== hoveredMesh) {
     highlightBetArea(hit, true)
-    canvas.style.cursor = hit.userData.betAreaId !== 'seven' ? 'pointer' : 'default'
+    canvas.style.cursor = 'pointer'
   }
   if (!hit) canvas.style.cursor = 'default'
   hoveredMesh = hit
@@ -68,19 +92,20 @@ let betAmount = 10
 let isSpectator = false
 let currentTableState = null
 
-// Refresh all visual bet state from table_state.bets
+// Refresh all visual bet state from table_state.bets, keyed by region so each bet
+// shows only on the half where it was placed.
 function updateBetVisuals(bets) {
+  reconcileBetRegions(bets)
   const counts = {}
   for (const bet of bets) {
     // On-point come/dont_come bets are represented by pucks on the number — skip chip count
     if ((bet.type === 'come' || bet.type === 'dont_come') && bet.target !== null) continue
-    counts[bet.type] = (counts[bet.type] ?? 0) + 1
+    const region = regionOf(bet)
+    if (!region) continue
+    counts[region] = (counts[region] ?? 0) + 1
   }
-  for (const mesh of betMeshes) {
-    const id = mesh.userData.betAreaId
-    setChipMarker(mesh, counts[id] ?? 0)
-  }
-  updateComePucks(betMeshes, bets)
+  for (const mesh of betMeshes) setChipMarker(mesh, counts[mesh.userData.regionId] ?? 0)
+  updateComePucks(betMeshes, bets, (bet) => (regionOf(bet) ?? '').endsWith('R') ? 'R' : 'L')
 }
 
 createAuthUI((token, username, spectate = false) => {
@@ -99,31 +124,36 @@ createAuthUI((token, username, spectate = false) => {
     raycaster.setFromCamera(pointer, camera)
     const hits = raycaster.intersectObjects(betMeshes, false)
     if (!hits.length) return
-    const { betAreaId } = hits[0].object.userData
-    if (!betAreaId || betAreaId === 'seven') return
+    const region = hits[0].object.userData.betType
+    const clickedRegionId = hits[0].object.userData.regionId
+    if (!region) return
 
     // Smart odds routing — detect when the player should be placing odds instead
     const myBets = (currentTableState?.bets ?? []).filter(b => b.socketId === socket.id)
     const phase  = currentTableState?.phase
-    let betType  = betAreaId
+    let betType  = region
     let target   = null
 
-    if ((betAreaId === 'pass_line' || betAreaId === 'pass_odds') &&
+    if (region === 'pass_line' &&
         phase === 'point' && myBets.some(b => b.type === 'pass_line')) {
-      // Player has a pass line bet in point phase — route to free odds
+      // Player has a pass line bet in point phase — route to free odds behind the line
       betType = 'pass_odds'
-    } else if (betAreaId === 'dont_pass' && phase === 'point' &&
+    } else if (region === 'dont_pass' && phase === 'point' &&
                myBets.some(b => b.type === 'dont_pass')) {
       // Player has a don't pass bet in point phase — route to lay odds
       betType = 'dont_pass_odds'
-    } else if (betAreaId.startsWith('place_')) {
+    } else if (region.startsWith('place_')) {
       // If a come bet has moved to this number, clicking adds come odds
-      const num = parseInt(betAreaId.split('_')[1])
+      const num = parseInt(region.split('_')[1])
       if (myBets.some(b => b.type === 'come' && b.target === num)) {
         betType = 'come_odds'
         target  = num
       }
     }
+
+    // Remember which region this click targeted so the chip renders only there
+    pendingRegions.push({ betType, target, regionId: clickedRegionId })
+    if (pendingRegions.length > 40) pendingRegions.shift()
 
     socket.emit('place_bet', { bet_type: betType, amount: betAmount, ...(target !== null ? { target } : {}) })
   })
@@ -191,6 +221,7 @@ createAuthUI((token, username, spectate = false) => {
       shooter: shooter?.username, bets: state.bets, mySocketId: socket.id,
     })
     updateBetVisuals(state.bets)
+    for (const p of pointPucks) updatePointPuck(p, state.phase, state.point, betMeshes)
     if (!isSpectator) {
       const amShooter = state.shooter_socket_id === socket.id
       const myBets = state.bets.filter(b => b.socketId === socket.id)
@@ -272,6 +303,7 @@ createAuthUI((token, username, spectate = false) => {
     })
 
     updateBetVisuals(table_state.bets)
+    for (const p of pointPucks) updatePointPuck(p, table_state.phase, table_state.point, betMeshes)
     if (!isSpectator) {
       const amShooter = table_state.shooter_socket_id === socket.id
       const myBets = table_state.bets.filter(b => b.socketId === socket.id)
