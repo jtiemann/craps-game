@@ -2,6 +2,7 @@ import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 import authRoutes from './src/auth/routes.js'
+import { giveChips } from './src/auth/index.js'
 import { socketAuthMiddleware } from './src/ws/authMiddleware.js'
 import { Table } from './src/rooms/table.js'
 import * as P from '../shared/protocol.js'
@@ -74,9 +75,9 @@ io.on('connection', (socket) => {
     }
   })
 
-  socket.on(P.PLACE_BET, ({ bet_type, amount }) => {
+  socket.on(P.PLACE_BET, ({ bet_type, amount, target = null }) => {
     try {
-      const bet = table.placeBet(socket.id, bet_type, amount)
+      const bet = table.placeBet(socket.id, bet_type, amount, target)
       io.to('main').emit(P.BET_PLACED, { bet, table_state: table.getState() })
     } catch (err) {
       socket.emit(P.ERROR, { message: err.message, code: err.code })
@@ -132,6 +133,26 @@ io.on('connection', (socket) => {
 
     pendingReconnect.set(socket.userId, { oldSocketId: socket.id, timer, isSpectator: isSpec })
   })
+})
+
+// Admin: top up any player's chip balance
+app.post('/admin/give-chips', (req, res) => {
+  try {
+    const { username, amount } = req.body
+    if (!username || !Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ error: 'username and positive amount required' })
+    }
+    const { userId, chipBalance } = giveChips(username, amount)
+    // Also patch the live table record if the player is currently seated
+    const seated = [...table.players.values()].find(p => p.userId === userId)
+    if (seated) {
+      seated.chipBalance = chipBalance
+      io.to('main').emit(P.TABLE_STATE, table.getState())
+    }
+    res.json({ username, chipBalance })
+  } catch (err) {
+    res.status(404).json({ error: err.message, code: err.code })
+  }
 })
 
 const PORT = process.env.PORT || 3000

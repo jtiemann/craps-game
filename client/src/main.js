@@ -5,9 +5,10 @@ import { createDieMesh } from './dice/mesh.js'
 import { throwDice } from './dice/animation.js'
 import { createHUD, createAuthUI } from './ui/hud.js'
 import { connectSocket } from './ws/socket.js'
+import { announceCroupier } from './audio/index.js'
 
 const canvas = document.getElementById('canvas')
-const { scene, camera } = createScene(canvas)
+const { scene, camera, controls } = createScene(canvas)
 const { betMeshes } = createTable(scene)
 const hud = createHUD()
 
@@ -15,8 +16,20 @@ const hud = createHUD()
 const raycaster = new THREE.Raycaster()
 const pointer = new THREE.Vector2()
 let hoveredMesh = null
+// dragMoved: true from first move-with-button-held until the next pointerdown.
+// This lets the 'click' event (which fires after pointerup) still see that a drag occurred.
+let dragMoved = false
 
+canvas.addEventListener('pointerdown', () => { dragMoved = false })
 canvas.addEventListener('pointermove', (e) => {
+  if (e.buttons !== 0) { dragMoved = true }
+
+  if (dragMoved) {
+    if (hoveredMesh) { highlightBetArea(hoveredMesh, false); hoveredMesh = null }
+    canvas.style.cursor = 'grabbing'
+    return
+  }
+
   pointer.x = (e.clientX / window.innerWidth) * 2 - 1
   pointer.y = -(e.clientY / window.innerHeight) * 2 + 1
   raycaster.setFromCamera(pointer, camera)
@@ -53,6 +66,7 @@ let animating = false
 let socketRef = null
 let betAmount = 10
 let isSpectator = false
+let currentTableState = null
 
 // Refresh all visual bet state from table_state.bets
 function updateBetVisuals(bets) {
@@ -77,9 +91,9 @@ createAuthUI((token, username, spectate = false) => {
   socketRef = socket
   window._debug.socket = socket
 
-  // Click on a bet area → raycast + place_bet (spectators cannot bet)
+  // Click on a bet area → raycast + place_bet (spectators cannot bet; ignore orbit drags)
   canvas.addEventListener('click', (e) => {
-    if (animating || isSpectator) return
+    if (animating || isSpectator || dragMoved) return
     pointer.x = (e.clientX / window.innerWidth) * 2 - 1
     pointer.y = -(e.clientY / window.innerHeight) * 2 + 1
     raycaster.setFromCamera(pointer, camera)
@@ -87,7 +101,31 @@ createAuthUI((token, username, spectate = false) => {
     if (!hits.length) return
     const { betAreaId } = hits[0].object.userData
     if (!betAreaId || betAreaId === 'seven') return
-    socket.emit('place_bet', { bet_type: betAreaId, amount: betAmount })
+
+    // Smart odds routing — detect when the player should be placing odds instead
+    const myBets = (currentTableState?.bets ?? []).filter(b => b.socketId === socket.id)
+    const phase  = currentTableState?.phase
+    let betType  = betAreaId
+    let target   = null
+
+    if ((betAreaId === 'pass_line' || betAreaId === 'pass_odds') &&
+        phase === 'point' && myBets.some(b => b.type === 'pass_line')) {
+      // Player has a pass line bet in point phase — route to free odds
+      betType = 'pass_odds'
+    } else if (betAreaId === 'dont_pass' && phase === 'point' &&
+               myBets.some(b => b.type === 'dont_pass')) {
+      // Player has a don't pass bet in point phase — route to lay odds
+      betType = 'dont_pass_odds'
+    } else if (betAreaId.startsWith('place_')) {
+      // If a come bet has moved to this number, clicking adds come odds
+      const num = parseInt(betAreaId.split('_')[1])
+      if (myBets.some(b => b.type === 'come' && b.target === num)) {
+        betType = 'come_odds'
+        target  = num
+      }
+    }
+
+    socket.emit('place_bet', { bet_type: betType, amount: betAmount, ...(target !== null ? { target } : {}) })
   })
 
   // Controls panel
@@ -111,6 +149,12 @@ createAuthUI((token, username, spectate = false) => {
   const btnRoll = makeBtn('Roll', '#8b2a2a')
   btnRoll.disabled = true
 
+  const rollStatus = document.createElement('div')
+  rollStatus.style.cssText = `
+    position:fixed;bottom:60px;left:50%;transform:translateX(-50%);
+    color:#ffcc00;font:12px monospace;text-align:center;z-index:10;pointer-events:none;
+  `
+
   if (isSpectator) {
     const watchLabel = document.createElement('span')
     watchLabel.style.cssText = 'color:#aaa;font:13px monospace;font-style:italic;'
@@ -118,8 +162,16 @@ createAuthUI((token, username, spectate = false) => {
     controls.append(watchLabel)
   } else {
     controls.append(amountLabel, amountInput, btnRoll)
+    document.body.appendChild(rollStatus)
     btnRoll.addEventListener('click', () => {
       if (!animating) socket.emit('ready_for_roll')
+    })
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !e.repeat && !btnRoll.disabled && !animating &&
+          document.activeElement?.tagName !== 'INPUT') {
+        e.preventDefault()
+        socket.emit('ready_for_roll')
+      }
     })
   }
   document.body.appendChild(controls)
@@ -131,6 +183,7 @@ createAuthUI((token, username, spectate = false) => {
   socket.on('connect_error', (err) => hud.update({ phase: 'error' }))
 
   function applyTableState(state) {
+    currentTableState = state
     const me = state.players.find(p => p.username === myUsername)
     const shooter = state.players.find(p => p.socketId === state.shooter_socket_id)
     hud.update({
@@ -143,7 +196,31 @@ createAuthUI((token, username, spectate = false) => {
       const myBets = state.bets.filter(b => b.socketId === socket.id)
       const hasLineBet = myBets.some(b => b.type === 'pass_line' || b.type === 'dont_pass')
       btnRoll.disabled = !amShooter || !hasLineBet
-      btnRoll.title = amShooter ? (hasLineBet ? '' : 'Place a Pass Line or Don\'t Pass bet first') : `Shooter: ${shooter?.username ?? '?'}`
+      updateRollStatus(amShooter, hasLineBet, shooter, myBets, state.phase)
+    }
+  }
+
+  function updateRollStatus(amShooter, hasLineBet, shooter, myBets, phase) {
+    if (!amShooter) {
+      const msg = `Waiting for ${shooter?.username ?? 'shooter'} to roll`
+      btnRoll.title = msg; rollStatus.textContent = msg
+    } else if (!hasLineBet) {
+      btnRoll.title = "Place a Pass Line or Don't Pass bet first"
+      rollStatus.textContent = 'Place a Pass Line bet, then click Roll'
+    } else {
+      btnRoll.title = ''
+      // Odds hint — shown when player can benefit from taking free odds
+      const hasPassLine = myBets.some(b => b.type === 'pass_line')
+      const hasPassOdds = myBets.some(b => b.type === 'pass_odds')
+      const hasDontPass = myBets.some(b => b.type === 'dont_pass')
+      const hasDontPassOdds = myBets.some(b => b.type === 'dont_pass_odds')
+      if (phase === 'point' && hasPassLine && !hasPassOdds) {
+        rollStatus.textContent = 'Click Pass Line to add Free Odds behind the bet'
+      } else if (phase === 'point' && hasDontPass && !hasDontPassOdds) {
+        rollStatus.textContent = "Click Don't Pass to add Lay Odds"
+      } else {
+        rollStatus.textContent = ''
+      }
     }
   }
 
@@ -169,6 +246,8 @@ createAuthUI((token, username, spectate = false) => {
   })
 
   function applyRollResolved({ die1, die2, total, event, table_state }) {
+    announceCroupier(event, total)
+    currentTableState = table_state
     const me = table_state.players.find(p => p.username === myUsername)
     const shooter = table_state.players.find(p => p.socketId === table_state.shooter_socket_id)
 
@@ -198,6 +277,7 @@ createAuthUI((token, username, spectate = false) => {
       const myBets = table_state.bets.filter(b => b.socketId === socket.id)
       const hasLineBet = myBets.some(b => b.type === 'pass_line' || b.type === 'dont_pass')
       btnRoll.disabled = !amShooter || !hasLineBet
+      updateRollStatus(amShooter, hasLineBet, shooter, myBets, table_state.phase)
     }
   }
 

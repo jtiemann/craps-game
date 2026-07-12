@@ -1,7 +1,7 @@
 const PHASE_COLOR = { come_out: '#2a7a4c', point: '#8b5a1a' }
 const BET_LABELS = {
   pass_line: 'Pass', dont_pass: "Don't Pass", come: 'Come', dont_come: "Don't Come",
-  pass_odds: 'Pass Odds', dont_pass_odds: "DP Odds", field: 'Field',
+  pass_odds: 'Pass Odds', dont_pass_odds: "DP Odds", come_odds: 'Come Odds', dont_come_odds: "DC Odds", field: 'Field',
   any_seven: 'Any 7', any_craps: 'Any Craps', yo: 'Yo (11)',
   aces: 'Aces', ace_deuce: 'Ace Deuce', boxcars: 'Boxcars', horn: 'Horn',
   place_4: 'Place 4', place_5: 'Place 5', place_6: 'Place 6',

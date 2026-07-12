@@ -50,6 +50,14 @@ export function updateChipBalance(userId, amount) {
   user.chipBalance = amount
 }
 
+export function giveChips(username, amount) {
+  const userId = byUsername.get(username)
+  if (!userId) throw Object.assign(new Error('User not found'), { code: 'USER_NOT_FOUND' })
+  const user = users.get(userId)
+  user.chipBalance += amount
+  return { userId, chipBalance: user.chipBalance }
+}
+
 export function clearUsers() {
   users.clear()
   byUsername.clear()

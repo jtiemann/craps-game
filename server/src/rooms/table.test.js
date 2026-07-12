@@ -211,6 +211,111 @@ describe('T16 — server-side validation', () => {
   })
 })
 
+describe('Come odds', () => {
+  // Helper: build a table in point phase with a come bet already on a number
+  function tableWithComeOnSix() {
+    const rolls = [
+      { die1: 3, die2: 3 }, // come_out → point 6
+      { die1: 2, die2: 3 }, // come bet with no target resolves → come_point_set(5)
+    ]
+    const t = new Table('t1', 8, () => rolls.shift())
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'pass_line', 10)
+    t.roll()                          // phase → point(6)
+    t.placeBet('s1', 'come', 10)
+    t.roll()                          // come bet moves to target 5
+    return t
+  }
+
+  it('allows come_odds in come_out phase when a come bet survived point_made', () => {
+    // come bets with established targets survive point_made and stay active in come_out
+    const rolls = [
+      { die1: 3, die2: 3 }, // come_out → point 6
+      { die1: 2, die2: 3 }, // point phase → come bet gets target 5
+      { die1: 3, die2: 3 }, // point_made(6) → phase resets to come_out; come bet on 5 survives
+    ]
+    const t = new Table('t1', 8, () => rolls.shift())
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'pass_line', 10)
+    t.roll()                          // point 6
+    t.placeBet('s1', 'come', 10)
+    t.roll()                          // come → target 5
+    t.roll()                          // point_made → come_out phase, come bet on 5 still active
+    expect(t.gameState.phase).toBe('come_out')
+    expect(t.bets.some(b => b.type === 'come' && b.target === 5)).toBe(true)
+    // Player should be able to take odds on the surviving come bet
+    expect(() => t.placeBet('s1', 'come_odds', 10, 5)).not.toThrow()
+  })
+
+  it('rejects come_odds when no base come bet exists on that number', () => {
+    const t = tableWithComeOnSix()
+    expect(() => t.placeBet('s1', 'come_odds', 10, 9))
+      .toThrow(expect.objectContaining({ code: 'NO_BASE_BET' }))
+  })
+
+  it('rejects come_odds when target is missing', () => {
+    const t = tableWithComeOnSix()
+    expect(() => t.placeBet('s1', 'come_odds', 10, null))
+      .toThrow(expect.objectContaining({ code: 'MISSING_TARGET' }))
+  })
+
+  it('accepts come_odds when a come bet is on that number', () => {
+    const t = tableWithComeOnSix()
+    const before = t.players.get('s1').chipBalance
+    t.placeBet('s1', 'come_odds', 20, 5)
+    expect(t.bets.some(b => b.type === 'come_odds' && b.target === 5 && b.amount === 20)).toBe(true)
+    expect(t.players.get('s1').chipBalance).toBe(before - 20)
+  })
+
+  it('come_odds wins with correct payout when come point is hit', () => {
+    const rolls = [
+      { die1: 3, die2: 3 }, // come_out → point 6
+      { die1: 2, die2: 3 }, // come_point_set(5)
+      { die1: 2, die2: 3 }, // come point 5 hit → come wins, come_odds wins
+    ]
+    const t = new Table('t1', 8, () => rolls.shift())
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'pass_line', 10)
+    t.roll()                          // point 6
+    t.placeBet('s1', 'come', 10)
+    t.roll()                          // come → 5
+    t.placeBet('s1', 'come_odds', 20, 5)
+    const before = t.players.get('s1').chipBalance
+    t.roll()                          // total=5 → come wins (even money), come_odds wins (3:2)
+    const after = t.players.get('s1').chipBalance
+    // come: 10 stake + 10 win = +20; come_odds: 20 stake + 30 win = +50; net = +70
+    expect(after - before).toBe(70)
+  })
+
+  it('come_odds loses on seven-out', () => {
+    const rolls = [
+      { die1: 3, die2: 3 }, // point 6
+      { die1: 2, die2: 3 }, // come_point_set(5)
+      { die1: 3, die2: 4 }, // seven_out → come and come_odds both lose
+    ]
+    const t = new Table('t1', 8, () => rolls.shift())
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.placeBet('s1', 'pass_line', 10)
+    t.roll()
+    t.placeBet('s1', 'come', 10)
+    t.roll()
+    t.placeBet('s1', 'come_odds', 20, 5)
+    t.roll()                          // seven_out
+    expect(t.bets.some(b => b.type === 'come_odds')).toBe(false)
+    expect(t.bets.some(b => b.type === 'come')).toBe(false)
+  })
+
+  it('replacing come_odds refunds the difference in chips', () => {
+    const t = tableWithComeOnSix()
+    t.placeBet('s1', 'come_odds', 20, 5)
+    const before = t.players.get('s1').chipBalance
+    t.placeBet('s1', 'come_odds', 30, 5)  // replace — net cost should be 10
+    expect(t.players.get('s1').chipBalance).toBe(before - 10)
+    expect(t.bets.filter(b => b.type === 'come_odds' && b.target === 5)).toHaveLength(1)
+    expect(t.bets.find(b => b.type === 'come_odds' && b.target === 5).amount).toBe(30)
+  })
+})
+
 describe('T17 — reconnection', () => {
   it('reconnectPlayer swaps socketId in players map', () => {
     const t = new Table('t1')

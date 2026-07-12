@@ -17,10 +17,13 @@ const ALL_BET_TYPES = new Set(Object.values(BET_TYPES))
 
 const PLACEABLE_COME_OUT = new Set([BET_TYPES.PASS_LINE, BET_TYPES.DONT_PASS, BET_TYPES.FIELD,
   BET_TYPES.ANY_SEVEN, BET_TYPES.ANY_CRAPS, BET_TYPES.YO, BET_TYPES.ACES,
-  BET_TYPES.ACE_DEUCE, BET_TYPES.BOXCARS, BET_TYPES.HORN])
+  BET_TYPES.ACE_DEUCE, BET_TYPES.BOXCARS, BET_TYPES.HORN,
+  // Come bets with established points survive point_made into come-out; odds may be added at any time
+  BET_TYPES.COME_ODDS, BET_TYPES.DONT_COME_ODDS])
 const PLACEABLE_POINT = new Set([BET_TYPES.PASS_LINE, BET_TYPES.DONT_PASS,
   BET_TYPES.PASS_ODDS, BET_TYPES.DONT_PASS_ODDS,
-  BET_TYPES.COME, BET_TYPES.DONT_COME, BET_TYPES.PLACE_4, BET_TYPES.PLACE_5,
+  BET_TYPES.COME, BET_TYPES.DONT_COME, BET_TYPES.COME_ODDS, BET_TYPES.DONT_COME_ODDS,
+  BET_TYPES.PLACE_4, BET_TYPES.PLACE_5,
   BET_TYPES.PLACE_6, BET_TYPES.PLACE_8, BET_TYPES.PLACE_9, BET_TYPES.PLACE_10,
   BET_TYPES.HARD_4, BET_TYPES.HARD_6, BET_TYPES.HARD_8, BET_TYPES.HARD_10,
   BET_TYPES.FIELD, BET_TYPES.ANY_SEVEN, BET_TYPES.ANY_CRAPS, BET_TYPES.YO,
@@ -104,13 +107,12 @@ export class Table {
     this._shooterSocketId = active[(idx + 1) % active.length]
   }
 
-  placeBet(socketId, betType, amount) {
+  placeBet(socketId, betType, amount, target = null) {
     if (this.spectators.has(socketId)) throw Object.assign(new Error('Spectators cannot bet'), { code: 'SPECTATOR_CANNOT_BET' })
     const player = this.players.get(socketId)
     if (!player) throw Object.assign(new Error('Not at table'), { code: 'NOT_AT_TABLE' })
     if (!ALL_BET_TYPES.has(betType)) throw Object.assign(new Error(`Unknown bet type: ${betType}`), { code: 'INVALID_BET_TYPE' })
     if (amount <= 0) throw Object.assign(new Error('Amount must be positive'), { code: 'INVALID_AMOUNT' })
-    if (player.chipBalance < amount) throw Object.assign(new Error('Insufficient chips'), { code: 'INSUFFICIENT_CHIPS' })
 
     const allowed = this.gameState.phase === 'come_out' ? PLACEABLE_COME_OUT : PLACEABLE_POINT
     if (!allowed.has(betType)) {
@@ -121,10 +123,43 @@ export class Table {
       throw Object.assign(new Error(`Already have a ${betType} bet`), { code: 'DUPLICATE_BET' })
     }
 
-    player.chipBalance -= amount
+    // Odds bets: require a base bet and replace any existing odds (player adjusts amount)
+    let replacedBet = null
+    if (betType === BET_TYPES.PASS_ODDS) {
+      if (!this.bets.some(b => b.socketId === socketId && b.type === BET_TYPES.PASS_LINE)) {
+        throw Object.assign(new Error('No Pass Line bet to place odds on'), { code: 'NO_BASE_BET' })
+      }
+      replacedBet = this.bets.find(b => b.socketId === socketId && b.type === BET_TYPES.PASS_ODDS) ?? null
+    } else if (betType === BET_TYPES.DONT_PASS_ODDS) {
+      if (!this.bets.some(b => b.socketId === socketId && b.type === BET_TYPES.DONT_PASS)) {
+        throw Object.assign(new Error("No Don't Pass bet to place odds on"), { code: 'NO_BASE_BET' })
+      }
+      replacedBet = this.bets.find(b => b.socketId === socketId && b.type === BET_TYPES.DONT_PASS_ODDS) ?? null
+    } else if (betType === BET_TYPES.COME_ODDS) {
+      if (!target) throw Object.assign(new Error('Target number required for come odds'), { code: 'MISSING_TARGET' })
+      if (!this.bets.some(b => b.socketId === socketId && b.type === BET_TYPES.COME && b.target === target)) {
+        throw Object.assign(new Error(`No come bet on ${target} to place odds on`), { code: 'NO_BASE_BET' })
+      }
+      replacedBet = this.bets.find(b => b.socketId === socketId && b.type === BET_TYPES.COME_ODDS && b.target === target) ?? null
+    } else if (betType === BET_TYPES.DONT_COME_ODDS) {
+      if (!target) throw Object.assign(new Error("Target number required for don't come odds"), { code: 'MISSING_TARGET' })
+      if (!this.bets.some(b => b.socketId === socketId && b.type === BET_TYPES.DONT_COME && b.target === target)) {
+        throw Object.assign(new Error(`No don't come bet on ${target} to place odds on`), { code: 'NO_BASE_BET' })
+      }
+      replacedBet = this.bets.find(b => b.socketId === socketId && b.type === BET_TYPES.DONT_COME_ODDS && b.target === target) ?? null
+    }
+
+    // Net cost after refunding any replaced odds
+    const netCost = amount - (replacedBet?.amount ?? 0)
+    if (player.chipBalance < netCost) {
+      throw Object.assign(new Error('Insufficient chips'), { code: 'INSUFFICIENT_CHIPS' })
+    }
+    if (replacedBet) this.bets = this.bets.filter(b => b !== replacedBet)
+
+    player.chipBalance -= netCost
     updateChipBalance(player.userId, player.chipBalance)
 
-    const bet = { id: randomUUID(), socketId, playerId: player.userId, type: betType, amount, target: null }
+    const bet = { id: randomUUID(), socketId, playerId: player.userId, type: betType, amount, target }
     this.bets.push(bet)
     return bet
   }
