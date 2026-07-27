@@ -185,13 +185,16 @@ createAuthUI((token, username, spectate = false) => {
     color:#ffcc00;font:12px monospace;text-align:center;z-index:10;pointer-events:none;
   `
 
+  const btnCashOut = makeBtn(isSpectator ? 'Leave' : 'Cash Out', '#5a4a2c')
+  btnCashOut.addEventListener('click', () => { socket.emit('cash_out') })
+
   if (isSpectator) {
     const watchLabel = document.createElement('span')
     watchLabel.style.cssText = 'color:#aaa;font:13px monospace;font-style:italic;'
     watchLabel.textContent = 'Watching'
-    controls.append(watchLabel)
+    controls.append(watchLabel, btnCashOut)
   } else {
-    controls.append(amountLabel, amountInput, btnRoll)
+    controls.append(amountLabel, amountInput, btnRoll, btnCashOut)
     document.body.appendChild(rollStatus)
     btnRoll.addEventListener('click', () => {
       if (!animating) socket.emit('ready_for_roll')
@@ -205,6 +208,11 @@ createAuthUI((token, username, spectate = false) => {
     })
   }
   document.body.appendChild(controls)
+
+  socket.on('cashed_out', ({ reason, chip_balance }) => {
+    socket.disconnect()
+    showCashedOut(reason, chip_balance)
+  })
 
   const joinEvent = isSpectator ? 'join_as_spectator' : 'join_table'
   socket.on('connect', () => socket.emit(joinEvent))
@@ -336,4 +344,29 @@ function makeBtn(label, bg) {
   b.style.cssText = `padding:10px 18px;border-radius:6px;border:none;background:${bg};
     color:#fff;cursor:pointer;font:14px monospace;`
   return b
+}
+
+// Full-screen overlay shown after the player leaves or is timed out
+function showCashedOut(reason, balance) {
+  animating = true  // block bet clicks / rolling behind the overlay
+  const msg = reason === 'timeout'
+    ? 'You were away too long and were cashed out.'
+    : 'You cashed out and left the table.'
+  const overlay = document.createElement('div')
+  overlay.style.cssText = `position:fixed;inset:0;background:rgba(10,10,20,.88);z-index:100;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+    color:#fff;font-family:monospace;text-align:center;`
+  const title = document.createElement('div')
+  title.style.cssText = 'font-size:28px;font-weight:bold;'
+  title.textContent = 'Cashed Out'
+  const sub = document.createElement('div')
+  sub.style.cssText = 'font-size:15px;color:#ccc;max-width:340px;'
+  sub.textContent = msg
+  const bal = document.createElement('div')
+  bal.style.cssText = 'font-size:20px;color:#ffd700;'
+  bal.textContent = balance != null ? `Balance: $${balance}` : ''
+  const rejoin = makeBtn('Rejoin Table', '#2a7a4c')
+  rejoin.addEventListener('click', () => location.reload())
+  overlay.append(title, sub, bal, rejoin)
+  document.body.appendChild(overlay)
 }

@@ -20,6 +20,7 @@ io.use(socketAuthMiddleware)
 
 const table = new Table('main')
 const RECONNECT_HOLD_MS = 30_000
+const ROLL_TIMEOUT_MS = 3 * 60_000  // shooter must roll within 3 min or they are cashed out
 
 // userId → { oldSocketId, timer, isSpectator }
 const pendingReconnect = new Map()
@@ -30,6 +31,38 @@ function clearReconnectHold(userId) {
     clearTimeout(held.timer)
     pendingReconnect.delete(userId)
   }
+}
+
+// ── Between-rolls shooter timeout ─────────────────────────────────────────────
+// The timer is armed for a specific shooter socket id. It resets on every roll and
+// whenever the shooter changes, so it always fires against the player it was watching.
+let rollTimer = null
+let armedFor = null
+
+function armRollTimer() {
+  if (rollTimer) clearTimeout(rollTimer)
+  armedFor = table._shooterSocketId
+  rollTimer = armedFor ? setTimeout(onRollTimeout, ROLL_TIMEOUT_MS) : null
+}
+
+// Re-arm only when the shooter actually changed (a new shooter gets a fresh window).
+function syncRollTimer() {
+  if (table._shooterSocketId !== armedFor) armRollTimer()
+}
+
+function onRollTimeout() {
+  const shooterId = armedFor
+  const sock = io.sockets.sockets.get(shooterId)
+  const info = table.cashOut(shooterId)  // advances the shooter if they were shooting
+  if (info) {
+    clearReconnectHold(info.userId)
+    if (sock) {
+      sock.emit(P.CASHED_OUT, { reason: 'timeout', chip_balance: info.chipBalance })
+      sock.leave('main')
+    }
+  }
+  io.to('main').emit(P.TABLE_STATE, table.getState())
+  armRollTimer()  // fresh window for the next shooter (clears if the table is now empty)
 }
 
 io.on('connection', (socket) => {
@@ -45,12 +78,14 @@ io.on('connection', (socket) => {
           socket.join('main')
           socket.emit(P.RECONNECTED, table.getState())
           io.to('main').emit(P.TABLE_STATE, table.getState())
+          syncRollTimer()
           return
         }
       }
       table.addPlayer(socket.id, socket.userId, socket.username, socket.chipBalance)
       socket.join('main')
       io.to('main').emit(P.TABLE_STATE, table.getState())
+      syncRollTimer()
     } catch (err) {
       socket.emit(P.ERROR, { message: err.message, code: err.code })
     }
@@ -99,6 +134,7 @@ io.on('connection', (socket) => {
         return
       }
       const { die1, die2, total, event, resolved, updates } = table.roll()
+      armRollTimer()  // reset the between-rolls window (advances to new shooter on seven-out)
       const rollTimestamp = Date.now()
       io.to('main').emit(P.ROLL_START, { die1, die2, total, timestamp: rollTimestamp })
       io.to('main').emit(P.ROLL_RESOLVED, { die1, die2, total, event, resolved, updates, table_state: table.getState() })
@@ -116,6 +152,17 @@ io.on('connection', (socket) => {
     }
   })
 
+  socket.on(P.CASH_OUT, () => {
+    const isSpec = table.isSpectator(socket.id)
+    const info = table.cashOut(socket.id)  // null if not a seated player
+    if (isSpec) table.removeSpectator(socket.id)
+    clearReconnectHold(socket.userId)      // don't hold a seat for someone who left
+    socket.emit(P.CASHED_OUT, { reason: 'left', chip_balance: info?.chipBalance ?? socket.chipBalance })
+    socket.leave('main')
+    io.to('main').emit(P.TABLE_STATE, table.getState())
+    syncRollTimer()  // shooter may have advanced
+  })
+
   socket.on('disconnect', () => {
     console.log('client disconnected', socket.id)
     const isPlayer = table.players.has(socket.id)
@@ -129,6 +176,7 @@ io.on('connection', (socket) => {
       table.removeSpectator(socket.id)
       const anyoneLeft = table.players.size > 0 || table.spectators.size > 0
       if (anyoneLeft) io.to('main').emit(P.TABLE_STATE, table.getState())
+      syncRollTimer()  // shooter may have advanced when the held seat was released
     }, RECONNECT_HOLD_MS)
 
     pendingReconnect.set(socket.userId, { oldSocketId: socket.id, timer, isSpectator: isSpec })

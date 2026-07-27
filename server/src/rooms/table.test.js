@@ -48,6 +48,28 @@ describe('Table', () => {
   })
 })
 
+describe('cashOut', () => {
+  it('refunds active bet stakes, removes the player, and advances the shooter', () => {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.addPlayer('s2', 'u2', 'bob', 1000)
+    t.placeBet('s1', 'pass_line', 10)  // alice: chips 990, one active bet
+    expect(t.players.get('s1').chipBalance).toBe(990)
+    expect(t.isShooter('s1')).toBe(true)
+
+    const info = t.cashOut('s1')
+    expect(info).toMatchObject({ userId: 'u1', username: 'alice', chipBalance: 1000 })  // stake refunded
+    expect(t.players.has('s1')).toBe(false)
+    expect(t.bets.filter(b => b.socketId === 's1')).toHaveLength(0)
+    expect(t.isShooter('s2')).toBe(true)  // dice passed to next player
+  })
+
+  it('returns null for someone who is not a seated player', () => {
+    const t = new Table('t1')
+    expect(t.cashOut('ghost')).toBeNull()
+  })
+})
+
 describe('Spectator mode', () => {
   it('addSpectator adds to spectators, not players', () => {
     const t = new Table('t1')

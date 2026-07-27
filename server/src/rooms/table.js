@@ -70,6 +70,24 @@ export class Table {
     this.spectators.delete(socketId)
   }
 
+  // Player leaves the table: refund the stakes of their still-active (unresolved) bets,
+  // then remove them (which drops their bets, rotation slot, and advances the shooter
+  // if they were shooting). Returns { userId, username, chipBalance } or null if absent.
+  cashOut(socketId) {
+    const player = this.players.get(socketId)
+    if (!player) return null
+    const refund = this.bets
+      .filter(b => b.socketId === socketId)
+      .reduce((sum, b) => sum + b.amount, 0)
+    if (refund > 0) {
+      player.chipBalance += refund
+      updateChipBalance(player.userId, player.chipBalance)
+    }
+    const result = { userId: player.userId, username: player.username, chipBalance: player.chipBalance }
+    this.removePlayer(socketId)
+    return result
+  }
+
   isSpectator(socketId) {
     return this.spectators.has(socketId)
   }
