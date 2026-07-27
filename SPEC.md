@@ -1,6 +1,9 @@
 # Craps Game — Project Spec
 
-_Based on confirmed intent (interview-me, 2026-06-19)_
+_Based on confirmed intent (interview-me, 2026-06-19). Revised 2026-07-27 to match the shipped v1._
+
+This is the design-intent document: what the game is and why. For build/run instructions and the
+as-built protocol reference, see [`README.md`](README.md).
 
 ---
 
@@ -27,6 +30,8 @@ A browser-based multiplayer craps game with realistic three.js 3D visuals. Playe
 - One table per game loop for v1 (expand later)
 - Max players per table: 8
 - Players can be spectators (watch without betting) or bettors
+- Players may cash out at any time — stakes on unresolved bets are refunded and the seat is released
+- A disconnected player's seat and bets are held for 30 seconds to survive a refresh
 
 ### Craps Game Loop
 
@@ -43,10 +48,16 @@ A browser-based multiplayer craps game with realistic three.js 3D visuals. Playe
 - Point number displayed; Pass/Don't Pass locked in
 - Betting open: Come, Don't Come, Place bets, Field, Props, Hard Ways, Odds (behind Pass/Don't Pass/Come/Don't Come)
 - Roll result:
-  - Point number → Pass Line wins, Don't Pass loses → return to Come-Out (new shooter rotation TBD)
+  - Point number → Pass Line wins, Don't Pass loses → return to Come-Out (same shooter keeps the dice)
   - `7` → Pass Line loses (seven-out), Don't Pass wins, all Come/Place bets lose → return to Come-Out
   - Any Come number → resolves or establishes Come point
   - Field/Prop numbers → resolved immediately on each roll
+
+**Shooter rotation**
+- Seated players hold the dice in join order; the first player to sit is the opening shooter
+- The dice pass to the next seated player on a **seven-out**, and when the current shooter leaves
+- A shooter must have a Pass Line or Don't Pass bet down before they may roll
+- A shooter who doesn't roll within **3 minutes** is cashed out automatically so the table can't stall
 
 ### Bet Menu (Full Standard Set)
 
@@ -88,7 +99,7 @@ A browser-based multiplayer craps game with realistic three.js 3D visuals. Playe
 ### Dice / RNG
 
 - **Server-authoritative**: server generates dice result before animation begins
-- **Weighted RNG**: configurable per-outcome weight table (`server/src/game/rng.js`). Default for dev = fair (1/36 per combination). Production weights tuned to yield ~2% overall house edge across the standard bet mix. Weight table is a server-side secret — never exposed to clients.
+- **Weighted RNG**: configurable per-outcome weight table. `server/src/game/rng.js` supplies the weighted-draw mechanism and a `FAIR_WEIGHTS` baseline (1/36 per combination); the live table owns its own weights (`HOUSE_WEIGHTS` in `server/src/rooms/table.js`), currently favoring 7 by a factor of 1.12. Production weights to be tuned to yield ~2% overall house edge across the standard bet mix. The weight table is a server-side secret — never exposed to clients.
 - **Interaction note**: Standard craps rules already build in bet-specific edges (1.41%–16.7%). The dice bias is a secondary tuning lever; calibrate weights carefully to avoid inverting edges on don't-side bets.
 
 ### Three.js Animation
@@ -103,58 +114,68 @@ A browser-based multiplayer craps game with realistic three.js 3D visuals. Playe
 All messages are plain JSON. No Socket.io-specific RPC patterns (to ease Elixir port).
 
 Key events (client → server):
-- `join_table` `{ tableId, jwt }`
-- `place_bet` `{ betType, amount, target? }` (target for place/come/hardway bets)
-- `remove_bet` `{ betId }`
-- `ready_for_roll` (shooter signals ready; or auto-roll timer triggers)
+- `join_table` — identity comes from the handshake JWT, not the payload
+- `join_as_spectator`
+- `place_bet` `{ bet_type, amount, target? }` (target for place/come/hardway and odds bets)
+- `ready_for_roll` (shooter signals ready)
+- `cash_out` (leave the table; unresolved stakes refunded)
+- `remove_bet` `{ bet_id }` — reserved in the protocol, not yet implemented
 
 Key events (server → client):
-- `table_state` `{ phase, point, players, bets, chips }` — full state on join
-- `bet_placed` `{ playerId, betType, amount, betId }`
-- `roll_start` `{ die1, die2, timestamp }` — result + sync timestamp for animation
-- `roll_resolved` `{ outcomes: [{ betId, result, payout }], newPhase, newPoint }`
-- `chip_update` `{ playerId, balance }`
+- `table_state` `{ id, phase, point, shooter_socket_id, players, spectators, bets }` — full state
+- `bet_placed` `{ bet, table_state }`
+- `roll_start` `{ die1, die2, total, timestamp }` — result + sync timestamp for animation
+- `roll_resolved` `{ die1, die2, total, event, resolved, updates, table_state }`
+- `chip_update` `{ player_id, chip_balance }`
+- `cashed_out` `{ reason: 'left' | 'timeout', chip_balance }`
+- `reconnected` — full table state, to the reconnecting socket only
 - `error` `{ code, message }`
+
+The as-built payloads and the full error-code list are tabulated in [`README.md`](README.md#protocol).
 
 ---
 
 ## 3. Project Structure
 
+As built (the original spec anticipated a `game/rules.js` and a `ws/handlers.js`; validation ended up
+in `rooms/table.js` and socket wiring stayed in `server/index.js`):
+
 ```
 craps-game/
 ├── server/
 │   ├── src/
-│   │   ├── game/
-│   │   │   ├── state.js       # pure game state machine (no I/O)
-│   │   │   ├── bets.js        # bet resolution logic, payout table
-│   │   │   ├── rng.js         # weighted RNG, weight table config
-│   │   │   └── rules.js       # craps phase transitions, validation
+│   │   ├── game/                 # pure functions, no I/O — the Elixir port target
+│   │   │   ├── state.js          # phase state machine (come-out ↔ point)
+│   │   │   ├── bets.js           # bet definitions + payout table
+│   │   │   ├── resolution.js     # resolve all bets against a roll
+│   │   │   └── rng.js            # weighted dice RNG + FAIR_WEIGHTS baseline
 │   │   ├── rooms/
-│   │   │   └── table.js       # room lifecycle, player roster, bet collection
+│   │   │   └── table.js          # roster, bet validation + collection, shooter
+│   │   │                         #   rotation, cash-out, house weight table
 │   │   ├── auth/
-│   │   │   └── index.js       # register, login, JWT sign/verify, in-memory user store
+│   │   │   ├── index.js          # register, login, JWT sign/verify, in-memory user store
+│   │   │   └── routes.js         # POST /auth/register, POST /auth/login
 │   │   └── ws/
-│   │       └── handlers.js    # Socket.io event wiring → calls game/ functions
+│   │       └── authMiddleware.js # Socket.io handshake auth
 │   ├── package.json
-│   └── index.js               # express + socket.io bootstrap
+│   └── index.js                  # express + socket.io bootstrap, event wiring,
+│                                 #   reconnect holds, idle-shooter timeout
 ├── client/
 │   ├── src/
-│   │   ├── scene/
-│   │   │   └── index.js       # three.js renderer, camera, lighting
-│   │   ├── table/
-│   │   │   └── index.js       # table mesh, felt material, betting area geometry
+│   │   ├── main.js               # bootstrap, auth UI, socket event handlers, bet UI
+│   │   ├── scene/index.js        # three.js renderer, camera, lighting
+│   │   ├── table/index.js        # table mesh, felt, betting areas, point puck
 │   │   ├── dice/
-│   │   │   ├── mesh.js        # dice geometry, face textures
-│   │   │   └── animation.js   # throw staging, physics blend, face-landing guide
-│   │   ├── ui/
-│   │   │   ├── hud.js         # chip balance, current bets overlay
-│   │   │   └── bets.js        # bet placement UI, bet area hit-testing
-│   │   └── ws/
-│   │       └── client.js      # Socket.io client wrapper, event dispatch
+│   │   │   ├── mesh.js           # dice geometry, face textures
+│   │   │   └── animation.js      # throw staging, physics blend, face-landing guide
+│   │   ├── ui/hud.js             # chip balance, bets, shooter indicator, outcome flash
+│   │   ├── audio/index.js        # synthesized SFX + croupier voice
+│   │   └── ws/socket.js          # Socket.io client wrapper, event dispatch
 │   ├── index.html
 │   └── vite.config.js
 ├── shared/
-│   └── protocol.js            # message type constants shared by server and client
+│   └── protocol.js               # message type constants shared by server and client
+├── README.md
 └── SPEC.md
 ```
 
@@ -176,7 +197,7 @@ npm run test:watch   # watch mode
 
 # Build
 npm run build        # Vite production bundle to client/dist/
-npm start            # production server (serves client/dist/ + socket.io)
+npm start            # production server (API + socket.io; does not yet serve client/dist/)
 ```
 
 ---
@@ -198,13 +219,14 @@ npm start            # production server (serves client/dist/ + socket.io)
 
 **Unit test: game logic only** (no socket, no browser, no three.js)
 
-- `game/state.js` — phase transitions (come-out → point → resolution), shooter rotation
-- `game/bets.js` — all payout calculations, edge cases (bars 12 on don't pass, hard way vs easy), come-point tracking per player
-- `game/rules.js` — valid bet placement per phase, invalid bet rejection
-- `game/rng.js` — weighted distribution matches target over 100k+ samples (within tolerance)
+- `game/state.js` — phase transitions (come-out → point → resolution)
+- `game/bets.js` + `game/resolution.js` — all payout calculations, edge cases (bars 12 on don't pass, hard way vs easy), come-point tracking per player
+- `game/rng.js` — weighted distribution matches target over large samples (within tolerance)
+- `auth/` — registration, bcrypt hashing, login, JWT verification
 
-**Integration test** (Node.js, no browser):
+**Room / integration tests** (Node.js, no browser):
 
+- `rooms/table.js` — roster management, per-phase bet validation and rejection, shooter rotation on seven-out and on departure, cash-out refunds
 - Simulated Socket.io client connects, authenticates, joins table, places pass line + field bets, receives `roll_start`, receives `roll_resolved` with correct payouts
 
 **Not automated for v1:**
@@ -245,11 +267,21 @@ npm start            # production server (serves client/dist/ + socket.io)
 - Persistent database (in-memory store is acceptable for prototype)
 - Mobile app wrapper
 - Regulatory/licensing compliance
-- Sound design / full visual polish
+- Full visual polish
 - Multiple simultaneous tables
-- Shooter rotation (single-shooter game is fine for v1)
-- Odds bet UI (complex table overlay — can add in v1.1)
+- Serving the built client from the Node server (separate static host for now)
+- `remove_bet` — reserved in the protocol, no handler yet
+
+**Delivered ahead of plan** (originally listed as out of scope for v1): shooter rotation, the odds
+bet UI, and synthesized sound design.
 
 ---
 
-_Move this file to the craps game project root when the repo is created._
+## 9. Known Prototype Gaps
+
+Acceptable locally, must be closed before any public deployment:
+
+- `POST /admin/give-chips` is unauthenticated
+- `JWT_SECRET` falls back to `dev_secret_change_in_prod` when unset
+- Socket.io CORS is pinned to `http://localhost:5173`
+- Users, chip balances, and table state are in-memory — everything resets on restart

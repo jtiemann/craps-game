@@ -12,11 +12,15 @@ The server is the sole source of truth for every roll. Dice outcomes are generat
 
 - **Full standard bet board** — Pass / Don't Pass, Come / Don't Come, Odds, Place, Hard Ways, Field, and the single-roll props (Any Seven, Any Craps, Yo, Horn, Big 6/8, and friends).
 - **Server-authoritative rolls** — outcomes decided server-side and broadcast to all players; clients cannot influence or predict the dice.
-- **Configurable house edge** — a per-combination weighted RNG (`server/src/game/rng.js`) defaults to fair (1/36) in dev and can be tuned for a target house edge in production. The weight table is a server-side secret.
+- **Configurable house edge** — a per-combination weighted RNG (`server/src/game/rng.js`) provides the mechanism; the live table supplies its own weight table (`HOUSE_WEIGHTS` in `server/src/rooms/table.js`), which currently favors 7 by a factor of 1.12. The weight table is a server-side secret.
 - **Realistic 3D dice** — three.js scene with staged throw physics that blend into a guided landing on the server-chosen faces.
 - **Synchronized multiplayer** — up to 8 players per table see the same roll animate simultaneously; spectators can watch without betting.
+- **Shooter rotation** — the dice pass to the next seated player on a seven-out (and when a shooter leaves). An on-table puck marks the point; the HUD shows who currently holds the dice.
+- **Shooter must have a line bet** — `ready_for_roll` is rejected unless the shooter has a Pass Line or Don't Pass bet down.
 - **JWT auth** — username/password registration and login; the token is passed in the Socket.io handshake.
 - **Reconnect handling** — a disconnected player's seat and bets are held for 30 seconds so a refresh or dropped connection doesn't forfeit the round.
+- **Cash out** — players can leave voluntarily; stakes on still-unresolved bets are refunded and the seat is released immediately (no reconnect hold). Spectators get the same control as **Leave**.
+- **Idle-shooter timeout** — a shooter who doesn't roll within 3 minutes is cashed out automatically so the table can't stall.
 - **Synthesized audio** — dice sounds via the Web Audio API and croupier announcements via SpeechSynthesis, no asset downloads required.
 
 ---
@@ -26,40 +30,71 @@ The server is the sole source of truth for every roll. Dice outcomes are generat
 ```
 craps-game/
 ├── server/                       # Node.js + Express + Socket.io
-│   ├── index.js                  # bootstrap: express, socket.io, reconnect holds
+│   ├── index.js                  # bootstrap: express, socket.io event wiring,
+│   │                             #   reconnect holds, idle-shooter timeout, admin route
 │   └── src/
 │       ├── game/                 # ── pure functions, no I/O (Elixir port target) ──
 │       │   ├── state.js          # phase state machine (come-out ↔ point)
 │       │   ├── bets.js           # bet definitions + payout table
 │       │   ├── resolution.js     # resolve bets against a roll
-│       │   └── rng.js            # weighted dice RNG + weight config
-│       ├── rooms/table.js        # table lifecycle, roster, bet collection
-│       ├── auth/                 # register/login, JWT, in-memory user store
+│       │   └── rng.js            # weighted dice RNG + fair-weight baseline
+│       ├── rooms/table.js        # table lifecycle, roster, bet validation + collection,
+│       │                         #   shooter rotation, house weight table
+│       ├── auth/
+│       │   ├── index.js          # register/login, JWT sign/verify, in-memory user store
+│       │   └── routes.js         # POST /auth/register, POST /auth/login
 │       └── ws/authMiddleware.js  # socket handshake auth
 ├── client/                       # Vite + three.js, no framework
 │   └── src/
-│       ├── scene/                # renderer, camera, lighting
-│       ├── table/                # felt, betting-area geometry
+│       ├── main.js               # app bootstrap, auth UI, socket event handlers
+│       ├── scene/index.js        # renderer, camera, lighting
+│       ├── table/index.js        # felt, betting-area geometry, point puck
 │       ├── dice/                 # dice mesh + throw animation
-│       ├── ui/hud.js             # chip balance, bets, outcome flash
-│       ├── audio/                # synthesized SFX + croupier voice
+│       ├── ui/hud.js             # chip balance, bets, shooter indicator, outcome flash
+│       ├── audio/index.js        # synthesized SFX + croupier voice
 │       └── ws/socket.js          # socket client + event dispatch
 └── shared/protocol.js            # message-type constants (client + server)
 ```
 
 **Core constraint:** everything under `server/src/game/` is pure — no socket, transport, or I/O imports. This keeps game logic a direct translation target for the planned Elixir/Phoenix backend, and makes it fully unit-testable in isolation.
 
+### HTTP API
+
+| Method | Path | Body | Notes |
+|--------|------|------|-------|
+| `POST` | `/auth/register` | `{ username, password }` | → `{ user }`; `409` if the username is taken |
+| `POST` | `/auth/login` | `{ username, password }` | → `{ token }` (JWT); `401` on bad credentials |
+| `POST` | `/admin/give-chips` | `{ username, amount }` | Dev top-up. **Unauthenticated — do not expose in production.** |
+
 ### Protocol
 
-All Socket.io messages are plain JSON with `snake_case` keys (Phoenix Channels compatibility). The shared message types live in [`shared/protocol.js`](shared/protocol.js):
+All Socket.io messages are plain JSON with `snake_case` keys (Phoenix Channels compatibility). The shared message types live in [`shared/protocol.js`](shared/protocol.js).
 
-| Client → Server | Server → Client |
-|-----------------|-----------------|
-| `join_table` / `join_as_spectator` | `table_state` — full state on join |
-| `place_bet` / `remove_bet` | `bet_placed`, `chip_update` |
-| `ready_for_roll` | `roll_start` — result + sync timestamp |
-| | `roll_resolved` — outcomes + new phase/point |
-| | `reconnected`, `error` |
+**Client → server**
+
+| Event | Payload | Notes |
+|-------|---------|-------|
+| `join_table` | — | Identity comes from the handshake JWT; reconnects into a held seat if one exists |
+| `join_as_spectator` | — | Watch only; betting is rejected |
+| `place_bet` | `{ bet_type, amount, target? }` | `target` for place / come / hard-way and odds bets |
+| `ready_for_roll` | — | Shooter only; requires a Pass Line or Don't Pass bet |
+| `cash_out` | — | Leave the table; refunds unresolved stakes |
+| `remove_bet` | `{ bet_id }` | **Declared in the protocol but not yet implemented server-side** |
+
+**Server → client**
+
+| Event | Payload |
+|-------|---------|
+| `table_state` | `{ id, phase, point, shooter_socket_id, players, spectators, bets }` — full state |
+| `bet_placed` | `{ bet, table_state }` |
+| `roll_start` | `{ die1, die2, total, timestamp }` — result + sync timestamp for the animation |
+| `roll_resolved` | `{ die1, die2, total, event, resolved, updates, table_state }` |
+| `chip_update` | `{ player_id, chip_balance }` |
+| `cashed_out` | `{ reason: 'left' \| 'timeout', chip_balance }` |
+| `reconnected` | Full table state, sent only to the reconnecting socket |
+| `error` | `{ code, message }` |
+
+Error codes emitted by the server: `TABLE_FULL`, `NOT_AT_TABLE`, `SPECTATOR_CANNOT_BET`, `INVALID_BET_TYPE`, `INVALID_AMOUNT`, `INVALID_PHASE`, `DUPLICATE_BET`, `NO_BASE_BET`, `MISSING_TARGET`, `INSUFFICIENT_CHIPS`, `NO_SHOOTER`, `NOT_SHOOTER`, `SHOOTER_NEEDS_LINE_BET`.
 
 ---
 
@@ -74,9 +109,18 @@ npm run dev          # server (:3000) + client (:5173) concurrently
 
 Then open **http://localhost:5173**, register an account, and join the table.
 
-Under the hood the Node server listens on **:3000** (override with `PORT`) and Vite serves the client on **:5173**, proxying `/auth` and `/socket.io` through to the server — so the browser only ever talks to `:5173` in development.
+Under the hood the Node server listens on **:3000** and Vite serves the client on **:5173**, proxying `/auth` and `/socket.io` through to the server — so the browser only ever talks to `:5173` in development.
 
 Every new account starts with **1000 play-money chips**.
+
+### Configuration
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `PORT` | `3000` | Node server port |
+| `JWT_SECRET` | `dev_secret_change_in_prod` | JWT signing key. **Must be set to a real secret in any non-local deployment.** |
+
+Socket.io CORS is currently pinned to `http://localhost:5173` in [`server/index.js`](server/index.js) — change it when deploying.
 
 ---
 
@@ -94,18 +138,21 @@ npm run test:watch   # watch mode
 
 # Production
 npm run build        # vite production bundle → client/dist/
-npm start            # node server (serves API + socket.io)
+npm start            # node server (API + socket.io only)
 ```
+
+`npm start` does **not** serve `client/dist/` — the built client needs a separate static host (or an `express.static` mount added to the server) until that is wired up.
 
 ---
 
 ## Testing
 
-Tests cover the game logic and room/socket integration — the parts that must be correct for the money math to hold. Run with `npm test`.
+Tests cover the game logic and room/socket integration — the parts that must be correct for the money math to hold. Run with `npm test` (204 tests across 8 files).
 
 - **`game/`** — phase transitions, payout calculations, and the many craps edge cases (bars-12 push on Don't Pass, hard-way vs. easy resolution, per-player come points).
 - **`rng.js`** — weighted distribution matches the target over large sample counts within tolerance.
-- **`rooms/table.js`** — roster management and the integration path: a simulated client authenticates, joins, bets, and receives correctly-resolved outcomes.
+- **`auth/`** — registration, password hashing, login, and JWT verification.
+- **`rooms/table.js`** — roster management, bet validation, shooter rotation, cash-out refunds, and the integration path: a simulated client authenticates, joins, bets, and receives correctly-resolved outcomes.
 
 Three.js visual correctness (dice landing on the right face, animation timing) and cross-browser rendering are verified manually — not automated in v1.
 
@@ -121,10 +168,12 @@ These are load-bearing. Don't break them:
 - Passwords are **bcrypt-hashed** — never stored in plaintext.
 - `server/src/game/` stays **free of transport/I/O imports**.
 
+**Known prototype gaps** (fine for local dev, must be closed before any public deployment): `/admin/give-chips` is unauthenticated, the JWT secret has a development fallback, and the user/chip store is in-memory only.
+
 ---
 
 ## Roadmap
 
-Planned beyond v1: real-money chip purchases (social-casino model — chips bought, never cashed out), a persistent database, multiple simultaneous tables, shooter rotation, and the Elixir/Phoenix backend port.
+Planned beyond v1: real-money chip purchases (social-casino model — chips bought, never cashed out), a persistent database, multiple simultaneous tables, a `remove_bet` implementation, static serving of the built client from the Node server, and the Elixir/Phoenix backend port.
 
 See [`SPEC.md`](SPEC.md) for the full design intent and rules reference.
