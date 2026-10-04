@@ -379,3 +379,61 @@ describe('T17 — reconnection', () => {
     expect(t.spectators.has('old')).toBe(false)
   })
 })
+
+describe('Table.removeBet / late line bets', () => {
+  function pointTable(point = 6) {
+    const t = new Table('t1')
+    t.addPlayer('s1', 'u1', 'alice', 1000)
+    t.gameState = { phase: 'point', point }
+    return t
+  }
+
+  it('takes down a place bet and refunds the stake', () => {
+    const t = pointTable()
+    const bet = t.placeBet('s1', 'place_6', 12)
+    expect(t.players.get('s1').chipBalance).toBe(988)
+    t.removeBet('s1', bet.id)
+    expect(t.bets).toHaveLength(0)
+    expect(t.players.get('s1').chipBalance).toBe(1000)
+  })
+
+  it("taking down Don't Pass also takes down its lay odds", () => {
+    const t = pointTable()
+    // line bets are come-out only; seed the Don't Pass directly for the point phase
+    const dp = { id: 'dp', socketId: 's1', playerId: 'u1', type: 'dont_pass', amount: 10, target: null }
+    t.bets = [dp]
+    t.placeBet('s1', 'dont_pass_odds', 20)
+    t.removeBet('s1', dp.id)
+    expect(t.bets).toHaveLength(0)
+    // seeded stake (10, never debited) + odds (20) refunded on top of the 980 left after the odds
+    expect(t.players.get('s1').chipBalance).toBe(1010)
+  })
+
+  it('locks Pass Line after the point and a come bet that has a number', () => {
+    const t = pointTable()
+    t.bets.push({ id: 'p', socketId: 's1', type: 'pass_line', amount: 10, target: null })
+    t.bets.push({ id: 'c', socketId: 's1', type: 'come', amount: 10, target: 8 })
+    expect(() => t.removeBet('s1', 'p')).toThrow(expect.objectContaining({ code: 'BET_LOCKED' }))
+    expect(() => t.removeBet('s1', 'c')).toThrow(expect.objectContaining({ code: 'BET_LOCKED' }))
+  })
+
+  it('allows removing a come bet still waiting for its first roll', () => {
+    const t = pointTable()
+    const c = t.placeBet('s1', 'come', 10)
+    t.removeBet('s1', c.id)
+    expect(t.players.get('s1').chipBalance).toBe(1000)
+  })
+
+  it("cannot remove another player's bet", () => {
+    const t = pointTable()
+    t.addPlayer('s2', 'u2', 'bob', 1000)
+    const bet = t.placeBet('s1', 'place_6', 12)
+    expect(() => t.removeBet('s2', bet.id)).toThrow(expect.objectContaining({ code: 'BET_NOT_FOUND' }))
+  })
+
+  it('rejects line bets once the point is set', () => {
+    const t = pointTable()
+    expect(() => t.placeBet('s1', 'pass_line', 10)).toThrow(expect.objectContaining({ code: 'INVALID_PHASE' }))
+    expect(() => t.placeBet('s1', 'dont_pass', 10)).toThrow(expect.objectContaining({ code: 'INVALID_PHASE' }))
+  })
+})

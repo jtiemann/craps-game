@@ -467,14 +467,18 @@ export function updatePointPuck(puck, phase, point, betMeshes) {
 }
 
 // Show come/dont_come on-point pucks on the place-number area of the half where the
-// bet was placed. `sideOf(bet)` returns 'L' or 'R'; defaults to 'L'.
-export function updateComePucks(betMeshes, bets, sideOf) {
+// bet was placed. `sideOf(bet)` returns 'L' or 'R'; defaults to 'L'. The local player's
+// pucks (mySocketId) get a gold ring; other players' pucks are drawn smaller and translucent.
+export function updateComePucks(betMeshes, bets, sideOf, mySocketId) {
   for (const mesh of betMeshes) {
     mesh.children.filter(c => c.userData.isPuck).forEach(c => {
-      c.geometry.dispose(); c.material.dispose(); mesh.remove(c)
+      c.traverse(o => { o.geometry?.dispose(); o.material?.dispose() })
+      mesh.remove(c)
     })
   }
-  for (const bet of bets) {
+  // Local player's pucks first so the per-number cap never hides them behind other players'
+  const ordered = [...bets].sort((a, b) => (b.socketId === mySocketId) - (a.socketId === mySocketId))
+  for (const bet of ordered) {
     if (!bet.target || (bet.type !== 'come' && bet.type !== 'dont_come')) continue
     const side = sideOf ? sideOf(bet) : 'L'
     const rid  = side === 'R' ? `place${bet.target}R` : `place${bet.target}`
@@ -483,9 +487,17 @@ export function updateComePucks(betMeshes, bets, sideOf) {
     const existing = mesh.children.filter(c => c.userData.isPuck)
     if (existing.length >= 3) continue
     const color = bet.type === 'come' ? 0xf0f0f0 : 0x8b0000
-    const geo   = new THREE.CylinderGeometry(0.1, 0.1, 0.05, 16)
-    const mat   = new THREE.MeshLambertMaterial({ color })
+    const mine  = bet.socketId === mySocketId
+    const r     = mine ? 0.1 : 0.075
+    const geo   = new THREE.CylinderGeometry(r, r, 0.05, 16)
+    const mat   = new THREE.MeshLambertMaterial({ color, transparent: !mine, opacity: mine ? 1 : 0.5 })
     const puck  = new THREE.Mesh(geo, mat)
+    if (mine) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.018, 8, 20), new THREE.MeshBasicMaterial({ color: 0xf4c542 }))
+      ring.rotation.x = Math.PI / 2
+      ring.position.y = 0.025
+      puck.add(ring)
+    }
     puck.position.set(-0.15 + existing.length * 0.14, 0.2, -0.12)
     puck.userData.isPuck = true
     mesh.add(puck)

@@ -119,6 +119,15 @@ io.on('connection', (socket) => {
     }
   })
 
+  socket.on(P.REMOVE_BET, ({ bet_id } = {}) => {
+    try {
+      table.removeBet(socket.id, bet_id)
+      io.to('main').emit(P.TABLE_STATE, table.getState())
+    } catch (err) {
+      socket.emit(P.ERROR, { message: err.message, code: err.code })
+    }
+  })
+
   socket.on(P.READY_FOR_ROLL, () => {
     try {
       if (!table._shooterSocketId) {

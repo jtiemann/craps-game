@@ -17,6 +17,9 @@ export function resolveAllBets(bets, die1, die2, gameState) {
     } else {
       resolved.push({
         betId: bet.id,
+        type: bet.type,
+        target: bet.target,
+        amount: bet.amount,
         playerId: bet.playerId,
         result: result.result,
         payout: result.payout,

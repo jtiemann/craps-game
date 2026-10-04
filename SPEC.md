@@ -119,7 +119,7 @@ Key events (client → server):
 - `place_bet` `{ bet_type, amount, target? }` (target for place/come/hardway and odds bets)
 - `ready_for_roll` (shooter signals ready)
 - `cash_out` (leave the table; unresolved stakes refunded)
-- `remove_bet` `{ bet_id }` — reserved in the protocol, not yet implemented
+- `remove_bet` `{ bet_id }` — take down a bet and refund it (Pass Line locked after the point; Come locked once on a number)
 
 Key events (server → client):
 - `table_state` `{ id, phase, point, shooter_socket_id, players, spectators, bets }` — full state
@@ -270,7 +270,7 @@ npm start            # production server (API + socket.io; does not yet serve cl
 - Full visual polish
 - Multiple simultaneous tables
 - Serving the built client from the Node server (separate static host for now)
-- `remove_bet` — reserved in the protocol, no handler yet
+- `remove_bet` — implemented (`Table.removeBet`)
 
 **Delivered ahead of plan** (originally listed as out of scope for v1): shooter rotation, the odds
 bet UI, and synthesized sound design.

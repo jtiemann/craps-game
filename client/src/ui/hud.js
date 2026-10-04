@@ -21,6 +21,13 @@ export function createHUD() {
   `
   document.body.appendChild(hud)
 
+  // Delegated handler for the ✕ take-down buttons rendered in the bet list
+  let onRemove = null
+  hud.addEventListener('click', (e) => {
+    const id = e.target.closest?.('[data-remove]')?.dataset.remove
+    if (id && onRemove) onRemove(id)
+  })
+
   // Flash overlay for outcomes
   const flash = document.createElement('div')
   flash.id = 'outcome-flash'
@@ -42,7 +49,7 @@ export function createHUD() {
     flashTimer = setTimeout(() => { flash.style.opacity = '0' }, 1800)
   }
 
-  function update({ phase, point, chips, bets, mySocketId, shooter } = {}) {
+  function update({ phase, point, chips, bets, mySocketId, shooter, canRemove } = {}) {
     const phaseColor = PHASE_COLOR[phase] ?? '#555'
     const phaseLabel = phase === 'come_out' ? 'Come Out' : phase === 'point' ? `Point: ${point}` : (phase ?? '—')
     const myBets = (bets ?? []).filter(b => b.socketId === mySocketId)
@@ -52,7 +59,10 @@ export function createHUD() {
         myBets.map(b => {
           const label = BET_LABELS[b.type] ?? b.type
           const target = b.target ? ` →${b.target}` : ''
-          return `<span style="color:#aef">${label}${target}</span> <b>$${b.amount}</b>`
+          const x = canRemove?.(b)
+            ? ` <span data-remove="${b.id}" title="Take down" style="pointer-events:auto;cursor:pointer;color:#f88;padding:0 4px">✕</span>`
+            : ''
+          return `<span style="color:#aef">${label}${target}</span> <b>$${b.amount}</b>${x}`
         }).join('<br>')
       : ''
 
@@ -64,7 +74,7 @@ export function createHUD() {
     ].filter(Boolean).join('<br>')
   }
 
-  return { update, showFlash }
+  return { update, showFlash, setOnRemove: (fn) => { onRemove = fn } }
 }
 
 export function createAuthUI(onLogin) {

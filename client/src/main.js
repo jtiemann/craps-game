@@ -105,7 +105,32 @@ function updateBetVisuals(bets) {
     counts[region] = (counts[region] ?? 0) + 1
   }
   for (const mesh of betMeshes) setChipMarker(mesh, counts[mesh.userData.regionId] ?? 0)
-  updateComePucks(betMeshes, bets, (bet) => (regionOf(bet) ?? '').endsWith('R') ? 'R' : 'L')
+  updateComePucks(betMeshes, bets, (bet) => (regionOf(bet) ?? '').endsWith('R') ? 'R' : 'L', socketRef?.id)
+}
+
+// Which bet a click on `region` means for the local player. Clicking Pass / Don't Pass
+// during the point adds odds; clicking a number a Come / Don't Come bet sits on adds odds there.
+function routeBet(region, myBets, phase) {
+  if (region === 'pass_line' && phase === 'point' && myBets.some(b => b.type === 'pass_line')) {
+    return { betType: 'pass_odds', target: null }
+  }
+  if (region === 'dont_pass' && phase === 'point' && myBets.some(b => b.type === 'dont_pass')) {
+    return { betType: 'dont_pass_odds', target: null }
+  }
+  if (region.startsWith('place_')) {
+    const num = parseInt(region.split('_')[1])
+    if (myBets.some(b => b.type === 'come' && b.target === num)) return { betType: 'come_odds', target: num }
+    if (myBets.some(b => b.type === 'dont_come' && b.target === num)) return { betType: 'dont_come_odds', target: num }
+  }
+  return { betType: region, target: null }
+}
+
+// Mirrors Table.removeBet: Pass Line is locked once the point is set, and a Come bet is
+// locked once it has travelled to a number.
+function canRemoveBet(bet, phase) {
+  if (bet.type === 'pass_line') return phase === 'come_out'
+  if (bet.type === 'come') return bet.target === null
+  return true
 }
 
 createAuthUI((token, username, spectate = false) => {
@@ -128,34 +153,37 @@ createAuthUI((token, username, spectate = false) => {
     const clickedRegionId = hits[0].object.userData.regionId
     if (!region) return
 
-    // Smart odds routing — detect when the player should be placing odds instead
     const myBets = (currentTableState?.bets ?? []).filter(b => b.socketId === socket.id)
-    const phase  = currentTableState?.phase
-    let betType  = region
-    let target   = null
-
-    if (region === 'pass_line' &&
-        phase === 'point' && myBets.some(b => b.type === 'pass_line')) {
-      // Player has a pass line bet in point phase — route to free odds behind the line
-      betType = 'pass_odds'
-    } else if (region === 'dont_pass' && phase === 'point' &&
-               myBets.some(b => b.type === 'dont_pass')) {
-      // Player has a don't pass bet in point phase — route to lay odds
-      betType = 'dont_pass_odds'
-    } else if (region.startsWith('place_')) {
-      // If a come bet has moved to this number, clicking adds come odds
-      const num = parseInt(region.split('_')[1])
-      if (myBets.some(b => b.type === 'come' && b.target === num)) {
-        betType = 'come_odds'
-        target  = num
-      }
-    }
+    const { betType, target } = routeBet(region, myBets, currentTableState?.phase)
 
     // Remember which region this click targeted so the chip renders only there
     pendingRegions.push({ betType, target, regionId: clickedRegionId })
     if (pendingRegions.length > 40) pendingRegions.shift()
 
     socket.emit('place_bet', { bet_type: betType, amount: betAmount, ...(target !== null ? { target } : {}) })
+  })
+
+  // Take a bet down: right-click its area, or ✕ in the HUD bet list
+  function removeBet(betId) {
+    if (!animating && !isSpectator) socket.emit('remove_bet', { bet_id: betId })
+  }
+  hud.setOnRemove(removeBet)
+  canvas.addEventListener('contextmenu', (e) => {
+    if (animating || isSpectator || dragMoved) return
+    pointer.x = (e.clientX / window.innerWidth) * 2 - 1
+    pointer.y = -(e.clientY / window.innerHeight) * 2 + 1
+    raycaster.setFromCamera(pointer, camera)
+    const hit = raycaster.intersectObjects(betMeshes, false)[0]?.object
+    if (!hit?.userData.betType) return
+    const phase = currentTableState?.phase
+    const myBets = (currentTableState?.bets ?? []).filter(b => b.socketId === socket.id)
+    const { betType, target } = routeBet(hit.userData.betType, myBets, phase)
+    const bet = [...myBets].reverse().find(b => b.type === betType && (target === null || b.target === target) &&
+      canRemoveBet(b, phase) && (regionOf(b) ?? hit.userData.regionId) === hit.userData.regionId)
+      ?? [...myBets].reverse().find(b => b.type === betType && (target === null || b.target === target) && canRemoveBet(b, phase))
+    if (!bet) return
+    e.preventDefault()
+    removeBet(bet.id)
   })
 
   // Controls panel
@@ -227,6 +255,7 @@ createAuthUI((token, username, spectate = false) => {
     hud.update({
       phase: state.phase, point: state.point, chips: me?.chipBalance,
       shooter: shooter?.username, bets: state.bets, mySocketId: socket.id,
+      canRemove: (b) => canRemoveBet(b, state.phase),
     })
     updateBetVisuals(state.bets)
     for (const p of pointPucks) updatePointPuck(p, state.phase, state.point, betMeshes)
@@ -284,7 +313,7 @@ createAuthUI((token, username, spectate = false) => {
     }
   })
 
-  function applyRollResolved({ die1, die2, total, event, table_state }) {
+  function applyRollResolved({ die1, die2, total, event, resolved, table_state }) {
     announceCroupier(event, total)
     currentTableState = table_state
     const me = table_state.players.find(p => p.username === myUsername)
@@ -301,6 +330,14 @@ createAuthUI((token, username, spectate = false) => {
     const [msg, color] = MSG[event] ?? []
     if (msg) hud.showFlash(msg, color)
 
+    // Per-bet results for this player (Come / odds / place wins would otherwise be silent)
+    const mine = (resolved ?? []).filter(r => r.playerId === me?.userId && r.result !== 'lose')
+    if (mine.length) {
+      const net = mine.reduce((sum, r) => sum + r.payout - r.amount, 0)
+      const names = mine.map(r => `${r.type.replace(/_/g, ' ')}${r.target ? ' ' + r.target : ''}`).join(', ')
+      setTimeout(() => hud.showFlash(`${names}: ${net > 0 ? '+' : ''}$${net}`, '#2aff80'), msg ? 1900 : 0)
+    }
+
     hud.update({
       phase: table_state.phase,
       point: table_state.point,
@@ -308,6 +345,7 @@ createAuthUI((token, username, spectate = false) => {
       shooter: shooter?.username,
       bets: table_state.bets,
       mySocketId: socket.id,
+      canRemove: (b) => canRemoveBet(b, table_state.phase),
     })
 
     updateBetVisuals(table_state.bets)

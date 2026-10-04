@@ -79,7 +79,7 @@ All Socket.io messages are plain JSON with `snake_case` keys (Phoenix Channels c
 | `place_bet` | `{ bet_type, amount, target? }` | `target` for place / come / hard-way and odds bets |
 | `ready_for_roll` | — | Shooter only; requires a Pass Line or Don't Pass bet |
 | `cash_out` | — | Leave the table; refunds unresolved stakes |
-| `remove_bet` | `{ bet_id }` | **Declared in the protocol but not yet implemented server-side** |
+| `remove_bet` | `{ bet_id }` Take a bet down and refund it. Pass Line is locked once the point is set; a Come bet is locked once it has a number. Taking down Don't Pass / Don't Come also removes its lay odds. In the UI: right-click the bet area or click ✕ in the HUD bet list |
 
 **Server → client**
 
@@ -174,6 +174,6 @@ These are load-bearing. Don't break them:
 
 ## Roadmap
 
-Planned beyond v1: real-money chip purchases (social-casino model — chips bought, never cashed out), a persistent database, multiple simultaneous tables, a `remove_bet` implementation, static serving of the built client from the Node server, and the Elixir/Phoenix backend port.
+Planned beyond v1: real-money chip purchases (social-casino model — chips bought, never cashed out), a persistent database, multiple simultaneous tables, static serving of the built client from the Node server, and the Elixir/Phoenix backend port.
 
 See [`SPEC.md`](SPEC.md) for the full design intent and rules reference.

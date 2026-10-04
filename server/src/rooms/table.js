@@ -20,7 +20,7 @@ const PLACEABLE_COME_OUT = new Set([BET_TYPES.PASS_LINE, BET_TYPES.DONT_PASS, BE
   BET_TYPES.ACE_DEUCE, BET_TYPES.BOXCARS, BET_TYPES.HORN,
   // Come bets with established points survive point_made into come-out; odds may be added at any time
   BET_TYPES.COME_ODDS, BET_TYPES.DONT_COME_ODDS])
-const PLACEABLE_POINT = new Set([BET_TYPES.PASS_LINE, BET_TYPES.DONT_PASS,
+const PLACEABLE_POINT = new Set([
   BET_TYPES.PASS_ODDS, BET_TYPES.DONT_PASS_ODDS,
   BET_TYPES.COME, BET_TYPES.DONT_COME, BET_TYPES.COME_ODDS, BET_TYPES.DONT_COME_ODDS,
   BET_TYPES.PLACE_4, BET_TYPES.PLACE_5,
@@ -180,6 +180,31 @@ export class Table {
     const bet = { id: randomUUID(), socketId, playerId: player.userId, type: betType, amount, target }
     this.bets.push(bet)
     return bet
+  }
+
+  // Take a bet down and refund its stake. Pass Line is a contract once the point is set,
+  // and a Come bet is a contract once it has travelled to a number; everything else
+  // (place, hard ways, big 6/8, odds, props, Don't Pass / Don't Come) can come down.
+  // Taking down a Don't bet also takes down its lay odds.
+  removeBet(socketId, betId) {
+    const player = this.players.get(socketId)
+    if (!player) throw Object.assign(new Error('Not at table'), { code: 'NOT_AT_TABLE' })
+    const bet = this.bets.find(b => b.id === betId && b.socketId === socketId)
+    if (!bet) throw Object.assign(new Error('Bet not found'), { code: 'BET_NOT_FOUND' })
+    if (bet.type === BET_TYPES.PASS_LINE && this.gameState.phase !== 'come_out') {
+      throw Object.assign(new Error('Pass Line cannot be removed once the point is set'), { code: 'BET_LOCKED' })
+    }
+    if (bet.type === BET_TYPES.COME && bet.target !== null) {
+      throw Object.assign(new Error('A Come bet on a number cannot be removed'), { code: 'BET_LOCKED' })
+    }
+    const dependent = bet.type === BET_TYPES.DONT_PASS ? b => b.type === BET_TYPES.DONT_PASS_ODDS
+      : bet.type === BET_TYPES.DONT_COME ? b => b.type === BET_TYPES.DONT_COME_ODDS && b.target === bet.target
+      : () => false
+    const removed = this.bets.filter(b => b === bet || (b.socketId === socketId && dependent(b)))
+    this.bets = this.bets.filter(b => !removed.includes(b))
+    player.chipBalance += removed.reduce((sum, b) => sum + b.amount, 0)
+    updateChipBalance(player.userId, player.chipBalance)
+    return removed
   }
 
   shooterHasLineBet() {
